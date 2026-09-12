@@ -23,6 +23,7 @@ CANAL_YOUTUBE = 1546538212896280596
 
 # Canal de YouTube
 YOUTUBE_URL = "https://youtube.com/@zerronova2026_yt"
+YOUTUBE_CHANNEL_ID = "UCi4-A3uuCLy8q_aZ8cI6h0w"
 
 # Intervalo de comprobación de YouTube
 YOUTUBE_INTERVALO_MINUTOS = 5
@@ -639,48 +640,6 @@ def guardar_estado_youtube(video_id):
         print(f"⚠️ No se pudo guardar estado de YouTube: {e}")
 
 
-async def obtener_channel_id():
-    """
-    Obtiene el ID del canal a partir del enlace @handle.
-    Se usa yt-dlp para evitar tener que configurar una API de YouTube.
-    """
-    try:
-        proceso = await asyncio.create_subprocess_exec(
-            "python",
-            "-m",
-            "yt_dlp",
-            "--flat-playlist",
-            "--playlist-end",
-            "1",
-            "--print",
-            "channel_id",
-            YOUTUBE_URL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-
-        stdout, stderr = await proceso.communicate()
-
-        if proceso.returncode != 0:
-            print(
-                "❌ No pude obtener el ID de YouTube:\n"
-                + stderr.decode(errors="ignore")
-            )
-            return None
-
-        texto = stdout.decode(errors="ignore").strip()
-
-        for linea in texto.splitlines():
-            linea = linea.strip()
-            if re.fullmatch(r"UC[a-zA-Z0-9_-]{20,}", linea):
-                return linea
-
-    except Exception as e:
-        print(f"❌ Error obteniendo ID de YouTube: {e}")
-
-    return None
-
-
 async def obtener_ultimo_video(channel_id):
     url = (
         "https://www.youtube.com/feeds/videos.xml"
@@ -739,7 +698,7 @@ async def obtener_ultimo_video(channel_id):
     }
 
 
-youtube_channel_id = None
+youtube_channel_id = YOUTUBE_CHANNEL_ID
 youtube_primera_comprobacion = True
 
 
@@ -749,13 +708,7 @@ async def youtube_checker():
     global youtube_primera_comprobacion
 
     if youtube_channel_id is None:
-        youtube_channel_id = await obtener_channel_id()
-
-        if youtube_channel_id:
-            print(f"✅ Canal YouTube detectado: {youtube_channel_id}")
-        else:
-            print("⚠️ No se pudo detectar el canal de YouTube.")
-            return
+        return
 
     try:
         video = await obtener_ultimo_video(youtube_channel_id)
