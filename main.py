@@ -1,10 +1,13 @@
-import os
-from datetime import timedelta
-
 import discord
-from discord.ext import commands
-from discord import app_commands
-
+from discord.ext import commands, tasks
+import aiohttp
+import asyncio
+import datetime
+import json
+import os
+import re
+import xml.etree.ElementTree as ET
+from collections import defaultdict, deque
 
 # =========================================================
 # CONFIGURACIÓN
@@ -12,612 +15,803 @@ from discord import app_commands
 
 TOKEN_DISCORD = os.getenv("TOKEN_DISCORD")
 
-# Tu ID de Discord
-ID_CREADOR = 1439941330355879978
+# Canal donde DiDo Admin registra baneos
+CANAL_BANEOS = 1546534756441653261
 
-# ID DEL SERVIDOR DONDE QUIERES LOS COMANDOS
-ID_SERVIDOR = 1544430992364802178
+# Canal donde DiDo Admin anuncia vídeos de YouTube
+CANAL_YOUTUBE = 1546538212896280596
 
-# Nombre del rol de administrador
-NOMBRE_ROL_ADMIN = "DiDo Admin"
+# Canal de YouTube
+YOUTUBE_URL = "https://youtube.com/@zerronova2026_yt"
 
+# Intervalo de comprobación de YouTube
+YOUTUBE_INTERVALO_MINUTOS = 5
+
+# Silencio automático por spam
+SPAM_MENSAJES = 6
+SPAM_SEGUNDOS = 8
+SPAM_TIMEOUT_MINUTOS = 5
+
+# Archivo local para recordar el último vídeo
+YOUTUBE_STATE_FILE = "youtube_state.json"
 
 # =========================================================
 # INTENTS
 # =========================================================
 
 intents = discord.Intents.default()
-intents.members = True
 intents.message_content = True
-
-
-# =========================================================
-# BOT
-# =========================================================
+intents.members = True
+intents.guilds = True
+intents.moderation = True
 
 bot = commands.Bot(
     command_prefix="!",
-    intents=intents
+    intents=intents,
+    help_command=None
 )
 
-
 # =========================================================
-# COMPROBAR CREADOR
-# =========================================================
-
-def es_creador(interaction: discord.Interaction) -> bool:
-    return interaction.user.id == ID_CREADOR
-
-
-async def comprobar_creador(interaction: discord.Interaction) -> bool:
-
-    if not es_creador(interaction):
-        await interaction.response.send_message(
-            "❌ No tienes permiso para usar este comando.",
-            ephemeral=True
-        )
-        return False
-
-    return True
-
-
-# =========================================================
-# OBTENER / CREAR ROL ADMIN
+# DATOS EN MEMORIA
 # =========================================================
 
-async def obtener_rol_admin(guild: discord.Guild):
+warnings = defaultdict(list)
+spam_tracker = defaultdict(lambda: deque())
 
-    rol = discord.utils.get(
-        guild.roles,
-        name=NOMBRE_ROL_ADMIN
+# =========================================================
+# UTILIDADES
+# =========================================================
+
+def canal(id_canal):
+    return bot.get_channel(id_canal)
+
+
+async def enviar_log_ban(guild, miembro, moderador, motivo):
+    canal_log = canal(CANAL_BANEOS)
+
+    if not canal_log:
+        print(f"⚠️ No encuentro el canal de baneos: {CANAL_BANEOS}")
+        return
+
+    embed = discord.Embed(
+        title="🔨 Baneo realizado",
+        color=discord.Color.red(),
+        timestamp=discord.utils.utcnow()
     )
 
-    if rol:
-        return rol
+    embed.add_field(
+        name="👤 Usuario",
+        value=f"{miembro} (`{miembro.id}`)",
+        inline=False
+    )
 
-    try:
-        rol = await guild.create_role(
-            name=NOMBRE_ROL_ADMIN,
-            permissions=discord.Permissions(administrator=True),
-            reason="Rol de administración de DiDo Admin"
-        )
+    embed.add_field(
+        name="🛡️ Moderador",
+        value=f"{moderador} (`{moderador.id}`)",
+        inline=False
+    )
 
-        return rol
+    embed.add_field(
+        name="📝 Motivo",
+        value=motivo,
+        inline=False
+    )
 
-    except discord.Forbidden:
-        return None
+    embed.set_footer(text=f"Servidor: {guild.name}")
+
+    await canal_log.send(embed=embed)
+
+
+async def timeout_miembro(miembro, minutos, motivo):
+    await miembro.timeout(
+        datetime.timedelta(minutes=minutos),
+        reason=motivo
+    )
 
 
 # =========================================================
-# BOT CONECTADO
+# EVENTO READY
 # =========================================================
 
 @bot.event
 async def on_ready():
+    print("========================================")
+    print("🤖 DiDo Admin")
+    print("========================================")
+    print(f"Conectado como: {bot.user}")
+    print(f"ID: {bot.user.id}")
+    print(f"Canal baneos: {CANAL_BANEOS}")
+    print(f"Canal YouTube: {CANAL_YOUTUBE}")
+    print(f"YouTube: {YOUTUBE_URL}")
+    print("Moderación: ACTIVADA")
+    print("Anti-spam: ACTIVADO")
+    print("========================================")
 
-    print("====================================")
-    print(f"🤖 DiDo Admin conectado como {bot.user}")
-    print(f"🆔 ID: {bot.user.id}")
-    print("====================================")
-
-    guild = discord.Object(id=ID_SERVIDOR)
-
-    try:
-        # Copiar los comandos al servidor específico
-        bot.tree.copy_global_to(guild=guild)
-
-        # Sincronizarlos inmediatamente
-        comandos = await bot.tree.sync(guild=guild)
-
-        print(
-            f"✅ {len(comandos)} comandos sincronizados "
-            f"en el servidor {ID_SERVIDOR}."
-        )
-
-    except Exception as error:
-        print(f"❌ Error sincronizando comandos: {error}")
-
-    # Preparar el rol en el servidor
-    servidor = bot.get_guild(ID_SERVIDOR)
-
-    if servidor:
-
-        rol = await obtener_rol_admin(servidor)
-
-        if rol:
-            print(
-                f"🛡️ Rol '{NOMBRE_ROL_ADMIN}' preparado "
-                f"en {servidor.name}"
-            )
-
-        else:
-            print("❌ No pude crear/obtener el rol DiDo Admin.")
-
-    else:
-        print("❌ DiDo Admin no está dentro del servidor.")
+    if not youtube_checker.is_running():
+        youtube_checker.start()
 
 
 # =========================================================
-# /ADMIN
+# COMANDOS DE MODERACIÓN
 # =========================================================
 
-@bot.tree.command(
-    name="admin",
-    description="Da el rol de Administrador a un usuario."
-)
-@app_commands.describe(
-    usuario="Usuario al que quieres dar Administrador"
-)
-async def admin(
-    interaction: discord.Interaction,
-    usuario: discord.Member
-):
-
-    if not await comprobar_creador(interaction):
+@bot.command()
+@commands.has_permissions(ban_members=True)
+@commands.bot_has_permissions(ban_members=True)
+async def ban(ctx, miembro: discord.Member, *, motivo="Sin motivo"):
+    if miembro == ctx.author:
+        await ctx.send("😂 No puedes banearte a ti mismo.")
         return
 
-    rol = await obtener_rol_admin(interaction.guild)
-
-    if rol is None:
-        await interaction.response.send_message(
-            "❌ No puedo crear el rol DiDo Admin.",
-            ephemeral=True
-        )
+    if miembro == ctx.guild.owner:
+        await ctx.send("⚠️ No puedo banear al propietario del servidor.")
         return
 
-    if rol >= interaction.guild.me.top_role:
-        await interaction.response.send_message(
-            "❌ Mi rol está por debajo del rol DiDo Admin. "
-            "Pon el rol del bot por encima.",
-            ephemeral=True
-        )
+    if miembro.top_role >= ctx.guild.me.top_role:
+        await ctx.send("⚠️ Ese usuario tiene un rol igual o superior al mío.")
         return
 
     try:
+        await miembro.ban(reason=f"{motivo} | Moderador: {ctx.author}")
+        await ctx.send(f"🔨 **{miembro}** ha sido baneado.")
 
-        await usuario.add_roles(
-            rol,
-            reason=f"Administrador dado por {interaction.user}"
-        )
-
-        await interaction.response.send_message(
-            f"🛡️ {usuario.mention} ahora tiene **DiDo Admin**."
+        await enviar_log_ban(
+            ctx.guild,
+            miembro,
+            ctx.author,
+            motivo
         )
 
     except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ Discord no me permite darle ese rol.",
-            ephemeral=True
-        )
+        await ctx.send("❌ No tengo permisos suficientes para banearlo.")
 
 
-# =========================================================
-# /QUITARADMIN
-# =========================================================
-
-@bot.tree.command(
-    name="quitaradmin",
-    description="Quita el rol DiDo Admin."
-)
-@app_commands.describe(
-    usuario="Usuario al que quieres quitar Administrador"
-)
-async def quitaradmin(
-    interaction: discord.Interaction,
-    usuario: discord.Member
-):
-
-    if not await comprobar_creador(interaction):
-        return
-
-    rol = discord.utils.get(
-        interaction.guild.roles,
-        name=NOMBRE_ROL_ADMIN
-    )
-
-    if not rol:
-        await interaction.response.send_message(
-            "❌ No existe el rol DiDo Admin.",
-            ephemeral=True
-        )
-        return
-
+@bot.command()
+@commands.has_permissions(ban_members=True)
+@commands.bot_has_permissions(ban_members=True)
+async def unban(ctx, *, usuario_id: int):
     try:
-
-        await usuario.remove_roles(
-            rol,
-            reason=f"Administrador quitado por {interaction.user}"
-        )
-
-        await interaction.response.send_message(
-            f"✅ Se ha quitado DiDo Admin a {usuario.mention}."
-        )
-
-    except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ No puedo quitar ese rol.",
-            ephemeral=True
-        )
-
-
-# =========================================================
-# /BAN
-# =========================================================
-
-@bot.tree.command(
-    name="ban",
-    description="Banea a un usuario."
-)
-@app_commands.describe(
-    usuario="Usuario a banear",
-    motivo="Motivo del baneo"
-)
-async def ban(
-    interaction: discord.Interaction,
-    usuario: discord.Member,
-    motivo: str = "Sin especificar"
-):
-
-    if not await comprobar_creador(interaction):
-        return
-
-    try:
-
-        await usuario.ban(
-            reason=motivo,
-            delete_message_days=1
-        )
-
-        await interaction.response.send_message(
-            f"🔨 {usuario.mention} ha sido baneado.\n"
-            f"📝 Motivo: {motivo}"
-        )
-
-    except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ No puedo banear a ese usuario.",
-            ephemeral=True
-        )
-
-
-# =========================================================
-# /KICK
-# =========================================================
-
-@bot.tree.command(
-    name="kick",
-    description="Expulsa a un usuario."
-)
-@app_commands.describe(
-    usuario="Usuario a expulsar",
-    motivo="Motivo"
-)
-async def kick(
-    interaction: discord.Interaction,
-    usuario: discord.Member,
-    motivo: str = "Sin especificar"
-):
-
-    if not await comprobar_creador(interaction):
-        return
-
-    try:
-
-        await usuario.kick(reason=motivo)
-
-        await interaction.response.send_message(
-            f"👢 {usuario.mention} ha sido expulsado.\n"
-            f"📝 Motivo: {motivo}"
-        )
-
-    except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ No puedo expulsar a ese usuario.",
-            ephemeral=True
-        )
-
-
-# =========================================================
-# /TIMEOUT
-# =========================================================
-
-@bot.tree.command(
-    name="timeout",
-    description="Pone a un usuario en timeout."
-)
-@app_commands.describe(
-    usuario="Usuario al que poner timeout",
-    minutos="Minutos de timeout",
-    motivo="Motivo"
-)
-async def timeout(
-    interaction: discord.Interaction,
-    usuario: discord.Member,
-    minutos: int,
-    motivo: str = "Sin especificar"
-):
-
-    if not await comprobar_creador(interaction):
-        return
-
-    if minutos < 1 or minutos > 40320:
-
-        await interaction.response.send_message(
-            "❌ El tiempo debe estar entre 1 y 40320 minutos.",
-            ephemeral=True
-        )
-        return
-
-    try:
-
-        hasta = discord.utils.utcnow() + timedelta(
-            minutes=minutos
-        )
-
-        await usuario.timeout(
-            hasta,
-            reason=motivo
-        )
-
-        await interaction.response.send_message(
-            f"⏱️ {usuario.mention} tiene timeout durante "
-            f"**{minutos} minutos**."
-        )
-
-    except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ No puedo ponerle timeout.",
-            ephemeral=True
-        )
-
-
-# =========================================================
-# /UNBAN
-# =========================================================
-
-@bot.tree.command(
-    name="unban",
-    description="Desbanea usando la ID de Discord."
-)
-@app_commands.describe(
-    usuario_id="ID del usuario"
-)
-async def unban(
-    interaction: discord.Interaction,
-    usuario_id: str
-):
-
-    if not await comprobar_creador(interaction):
-        return
-
-    try:
-
-        usuario = await bot.fetch_user(
-            int(usuario_id)
-        )
-
-        await interaction.guild.unban(
+        usuario = await bot.fetch_user(usuario_id)
+        await ctx.guild.unban(
             usuario,
-            reason=f"Desbaneo realizado por {interaction.user}"
+            reason=f"Desbaneado por {ctx.author}"
         )
-
-        await interaction.response.send_message(
-            f"✅ {usuario} ha sido desbaneado."
-        )
-
-    except ValueError:
-
-        await interaction.response.send_message(
-            "❌ La ID no es válida.",
-            ephemeral=True
-        )
-
+        await ctx.send(f"✅ **{usuario}** ha sido desbaneado.")
     except discord.NotFound:
-
-        await interaction.response.send_message(
-            "❌ Ese usuario no está baneado.",
-            ephemeral=True
-        )
-
+        await ctx.send("❌ No encuentro a ese usuario baneado.")
     except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ No tengo permiso para desbanear.",
-            ephemeral=True
-        )
+        await ctx.send("❌ No tengo permisos para desbanear.")
 
 
-# =========================================================
-# /CLEAR
-# =========================================================
-
-@bot.tree.command(
-    name="clear",
-    description="Borra mensajes del canal."
-)
-@app_commands.describe(
-    cantidad="Cantidad de mensajes a borrar"
-)
-async def clear(
-    interaction: discord.Interaction,
-    cantidad: int
-):
-
-    if not await comprobar_creador(interaction):
+@bot.command()
+@commands.has_permissions(kick_members=True)
+@commands.bot_has_permissions(kick_members=True)
+async def kick(ctx, miembro: discord.Member, *, motivo="Sin motivo"):
+    if miembro == ctx.guild.owner:
+        await ctx.send("⚠️ No puedo expulsar al propietario.")
         return
 
-    if cantidad < 1 or cantidad > 100:
-
-        await interaction.response.send_message(
-            "❌ La cantidad debe estar entre 1 y 100.",
-            ephemeral=True
-        )
+    if miembro.top_role >= ctx.guild.me.top_role:
+        await ctx.send("⚠️ Ese usuario tiene un rol igual o superior al mío.")
         return
-
-    if not isinstance(
-        interaction.channel,
-        discord.TextChannel
-    ):
-        await interaction.response.send_message(
-            "❌ Este comando solo funciona en canales de texto.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer(
-        ephemeral=True
-    )
 
     try:
-
-        mensajes = await interaction.channel.purge(
-            limit=cantidad
-        )
-
-        await interaction.followup.send(
-            f"🧹 He borrado **{len(mensajes)} mensajes**.",
-            ephemeral=True
-        )
-
+        await miembro.kick(reason=f"{motivo} | Moderador: {ctx.author}")
+        await ctx.send(f"👢 **{miembro}** ha sido expulsado.")
     except discord.Forbidden:
+        await ctx.send("❌ No tengo permisos suficientes.")
 
-        await interaction.followup.send(
-            "❌ No tengo permiso para borrar mensajes.",
-            ephemeral=True
+
+@bot.command(aliases=["mute", "timeout"])
+@commands.has_permissions(moderate_members=True)
+@commands.bot_has_permissions(moderate_members=True)
+async def silenciar(ctx, miembro: discord.Member, minutos: int = 10, *, motivo="Sin motivo"):
+    if minutos < 1 or minutos > 40320:
+        await ctx.send("⚠️ El tiempo debe estar entre 1 minuto y 28 días.")
+        return
+
+    if miembro == ctx.guild.owner:
+        await ctx.send("⚠️ No puedo silenciar al propietario.")
+        return
+
+    if miembro.top_role >= ctx.guild.me.top_role:
+        await ctx.send("⚠️ Ese usuario tiene un rol igual o superior al mío.")
+        return
+
+    try:
+        await timeout_miembro(
+            miembro,
+            minutos,
+            f"{motivo} | Moderador: {ctx.author}"
+        )
+        await ctx.send(
+            f"🔇 **{miembro}** ha sido silenciado durante **{minutos} minutos**."
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ No tengo permisos suficientes.")
+
+
+@bot.command(aliases=["unmute", "untimeout"])
+@commands.has_permissions(moderate_members=True)
+@commands.bot_has_permissions(moderate_members=True)
+async def unsilenciar(ctx, miembro: discord.Member):
+    try:
+        await miembro.timeout(
+            None,
+            reason=f"Silencio retirado por {ctx.author}"
+        )
+        await ctx.send(f"🔊 **{miembro}** ya puede hablar.")
+    except discord.Forbidden:
+        await ctx.send("❌ No tengo permisos suficientes.")
+
+
+# =========================================================
+# WARNINGS
+# =========================================================
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def warn(ctx, miembro: discord.Member, *, motivo="Sin motivo"):
+    warnings[miembro.id].append({
+        "moderador": str(ctx.author),
+        "motivo": motivo,
+        "fecha": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    })
+
+    total = len(warnings[miembro.id])
+
+    await ctx.send(
+        f"⚠️ **{miembro}** ha recibido un aviso. "
+        f"Total: **{total}**."
+    )
+
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def warns(ctx, miembro: discord.Member):
+    lista = warnings.get(miembro.id, [])
+
+    if not lista:
+        await ctx.send(f"✅ **{miembro}** no tiene avisos.")
+        return
+
+    embed = discord.Embed(
+        title=f"⚠️ Avisos de {miembro}",
+        color=discord.Color.orange()
+    )
+
+    for i, aviso in enumerate(lista, 1):
+        embed.add_field(
+            name=f"Aviso {i}",
+            value=(
+                f"**Motivo:** {aviso['motivo']}\n"
+                f"**Moderador:** {aviso['moderador']}"
+            ),
+            inline=False
         )
 
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def clearwarns(ctx, miembro: discord.Member):
+    warnings.pop(miembro.id, None)
+    await ctx.send(f"🧹 Avisos de **{miembro}** eliminados.")
+
 
 # =========================================================
-# /PERMISOS
+# MENSAJES / CANALES
 # =========================================================
 
-@bot.tree.command(
-    name="permisos",
-    description="Muestra los permisos de un usuario."
-)
-@app_commands.describe(
-    usuario="Usuario que quieres comprobar"
-)
-async def permisos(
-    interaction: discord.Interaction,
-    usuario: discord.Member
-):
+@bot.command(aliases=["purge", "limpiar"])
+@commands.has_permissions(manage_messages=True)
+@commands.bot_has_permissions(manage_messages=True)
+async def clear(ctx, cantidad: int):
+    if cantidad < 1 or cantidad > 100:
+        await ctx.send("⚠️ Puedes borrar entre 1 y 100 mensajes.")
+        return
 
-    p = usuario.guild_permissions
+    mensajes = await ctx.channel.purge(limit=cantidad + 1)
+    aviso = await ctx.send(
+        f"🧹 He borrado **{len(mensajes) - 1}** mensajes."
+    )
+    await asyncio.sleep(3)
+    try:
+        await aviso.delete()
+    except discord.HTTPException:
+        pass
 
-    texto = (
-        f"👤 **{usuario.display_name}**\n\n"
-        f"👑 Administrador: **{'Sí' if p.administrator else 'No'}**\n"
-        f"🔨 Banear: **{'Sí' if p.ban_members else 'No'}**\n"
-        f"👢 Expulsar: **{'Sí' if p.kick_members else 'No'}**\n"
-        f"⏱️ Timeout: **{'Sí' if p.moderate_members else 'No'}**\n"
-        f"🧹 Gestionar mensajes: **{'Sí' if p.manage_messages else 'No'}**\n"
-        f"🔧 Gestionar servidor: **{'Sí' if p.manage_guild else 'No'}**\n"
-        f"🎭 Gestionar roles: **{'Sí' if p.manage_roles else 'No'}**\n"
-        f"📢 Gestionar canales: **{'Sí' if p.manage_channels else 'No'}**"
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+@commands.bot_has_permissions(manage_channels=True)
+async def lock(ctx):
+    overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrites.send_messages = False
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        overwrite=overwrites,
+        reason=f"Canal bloqueado por {ctx.author}"
     )
 
-    await interaction.response.send_message(
-        texto
+    await ctx.send("🔒 Canal bloqueado.")
+
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+@commands.bot_has_permissions(manage_channels=True)
+async def unlock(ctx):
+    overwrites = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrites.send_messages = True
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        overwrite=overwrites,
+        reason=f"Canal desbloqueado por {ctx.author}"
+    )
+
+    await ctx.send("🔓 Canal desbloqueado.")
+
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def slowmode(ctx, segundos: int):
+    if segundos < 0 or segundos > 21600:
+        await ctx.send("⚠️ Usa entre 0 y 21600 segundos.")
+        return
+
+    await ctx.channel.edit(
+        slowmode_delay=segundos,
+        reason=f"Slowmode cambiado por {ctx.author}"
+    )
+
+    await ctx.send(f"⏱️ Slowmode: **{segundos} segundos**.")
+
+
+# =========================================================
+# ROLES
+# =========================================================
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+@commands.bot_has_permissions(manage_roles=True)
+async def addrole(ctx, miembro: discord.Member, *, rol: discord.Role):
+    if rol >= ctx.guild.me.top_role:
+        await ctx.send("⚠️ No puedo gestionar ese rol.")
+        return
+
+    await miembro.add_roles(
+        rol,
+        reason=f"Rol añadido por {ctx.author}"
+    )
+    await ctx.send(f"✅ Rol **{rol.name}** añadido a **{miembro}**.")
+
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+@commands.bot_has_permissions(manage_roles=True)
+async def removerole(ctx, miembro: discord.Member, *, rol: discord.Role):
+    if rol >= ctx.guild.me.top_role:
+        await ctx.send("⚠️ No puedo gestionar ese rol.")
+        return
+
+    await miembro.remove_roles(
+        rol,
+        reason=f"Rol quitado por {ctx.author}"
+    )
+    await ctx.send(f"✅ Rol **{rol.name}** quitado a **{miembro}**.")
+
+
+# =========================================================
+# INFORMACIÓN
+# =========================================================
+
+@bot.command()
+async def userinfo(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+
+    embed = discord.Embed(
+        title=f"👤 Información de {miembro}",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(name="ID", value=str(miembro.id), inline=False)
+    embed.add_field(name="Nombre", value=str(miembro), inline=False)
+    embed.add_field(
+        name="Cuenta creada",
+        value=discord.utils.format_dt(miembro.created_at, "F"),
+        inline=False
+    )
+    embed.add_field(
+        name="Entró al servidor",
+        value=(
+            discord.utils.format_dt(miembro.joined_at, "F")
+            if miembro.joined_at else "Desconocido"
+        ),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def serverinfo(ctx):
+    guild = ctx.guild
+
+    embed = discord.Embed(
+        title=f"📊 {guild.name}",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(name="ID", value=str(guild.id), inline=False)
+    embed.add_field(name="Miembros", value=str(guild.member_count), inline=False)
+    embed.add_field(name="Canales", value=str(len(guild.channels)), inline=False)
+    embed.add_field(name="Roles", value=str(len(guild.roles)), inline=False)
+    embed.add_field(
+        name="Creado",
+        value=discord.utils.format_dt(guild.created_at, "F"),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def permisos(ctx, miembro: discord.Member = None):
+    miembro = miembro or ctx.author
+    p = miembro.guild_permissions
+
+    permisos_lista = [
+        f"Administrador: {'✅' if p.administrator else '❌'}",
+        f"Banear: {'✅' if p.ban_members else '❌'}",
+        f"Expulsar: {'✅' if p.kick_members else '❌'}",
+        f"Gestionar mensajes: {'✅' if p.manage_messages else '❌'}",
+        f"Moderar miembros: {'✅' if p.moderate_members else '❌'}",
+        f"Gestionar roles: {'✅' if p.manage_roles else '❌'}",
+        f"Gestionar canales: {'✅' if p.manage_channels else '❌'}",
+        f"Gestionar servidor: {'✅' if p.manage_guild else '❌'}"
+    ]
+
+    await ctx.send(
+        f"🛡️ **Permisos de {miembro}**\n" +
+        "\n".join(permisos_lista)
     )
 
 
 # =========================================================
-# /SERVERINFO
+# AYUDA
 # =========================================================
 
-@bot.tree.command(
-    name="serverinfo",
-    description="Muestra información del servidor."
-)
-async def serverinfo(
-    interaction: discord.Interaction
-):
-
-    guild = interaction.guild
-
-    texto = (
-        f"🏠 **{guild.name}**\n\n"
-        f"🆔 ID: `{guild.id}`\n"
-        f"👥 Miembros: **{guild.member_count}**\n"
-        f"💬 Canales: **{len(guild.channels)}**\n"
-        f"🎭 Roles: **{len(guild.roles)}**\n"
-        f"👑 Dueño: **{guild.owner}**"
+@bot.command(name="ayuda")
+async def ayuda(ctx):
+    embed = discord.Embed(
+        title="🛡️ DiDo Admin",
+        description="Comandos disponibles:",
+        color=discord.Color.blurple()
     )
 
-    await interaction.response.send_message(
-        texto
+    embed.add_field(
+        name="Moderación",
+        value=(
+            "`!ban @usuario motivo`\n"
+            "`!unban ID`\n"
+            "`!kick @usuario motivo`\n"
+            "`!silenciar @usuario minutos motivo`\n"
+            "`!unsilenciar @usuario`\n"
+            "`!warn @usuario motivo`\n"
+            "`!warns @usuario`\n"
+            "`!clearwarns @usuario`"
+        ),
+        inline=False
     )
 
-
-# =========================================================
-# /INFO
-# =========================================================
-
-@bot.tree.command(
-    name="info",
-    description="Información sobre DiDo Admin."
-)
-async def info(
-    interaction: discord.Interaction
-):
-
-    await interaction.response.send_message(
-        "🤖 **DiDo Admin**\n\n"
-        "🛡️ Administración\n"
-        "🔨 Moderación\n"
-        "🎭 Roles\n"
-        "🧹 Limpieza\n"
-        "🔐 Comandos protegidos\n\n"
-        "Creado por Ares."
+    embed.add_field(
+        name="Servidor",
+        value=(
+            "`!clear 10`\n"
+            "`!lock`\n"
+            "`!unlock`\n"
+            "`!slowmode 10`\n"
+            "`!addrole @usuario @rol`\n"
+            "`!removerole @usuario @rol`"
+        ),
+        inline=False
     )
 
+    embed.add_field(
+        name="Información",
+        value=(
+            "`!userinfo @usuario`\n"
+            "`!serverinfo`\n"
+            "`!permisos @usuario`"
+        ),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
 
 # =========================================================
-# MENSAJES
+# ANTI-SPAM
 # =========================================================
 
 @bot.event
-async def on_message(
-    message: discord.Message
-):
-
-    if message.author.bot:
+async def on_message(message):
+    if message.author.bot or not message.guild:
         return
+
+    ahora = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    clave = (message.guild.id, message.author.id)
+
+    cola = spam_tracker[clave]
+    cola.append(ahora)
+
+    while cola and ahora - cola[0] > SPAM_SEGUNDOS:
+        cola.popleft()
+
+    if len(cola) >= SPAM_MENSAJES:
+        miembro = message.author
+
+        if (
+            miembro != message.guild.owner
+            and miembro.top_role < message.guild.me.top_role
+            and message.guild.me.guild_permissions.moderate_members
+        ):
+            try:
+                await timeout_miembro(
+                    miembro,
+                    SPAM_TIMEOUT_MINUTOS,
+                    "Anti-spam automático"
+                )
+
+                await message.channel.send(
+                    f"🔇 {miembro.mention} ha sido silenciado "
+                    f"**{SPAM_TIMEOUT_MINUTOS} minutos** por spam."
+                )
+
+                cola.clear()
+
+            except discord.HTTPException:
+                pass
 
     await bot.process_commands(message)
 
 
 # =========================================================
-# ERRORES
+# MANEJO DE ERRORES
 # =========================================================
 
-@bot.tree.error
-async def error_comando(
-    interaction: discord.Interaction,
-    error: app_commands.AppCommandError
-):
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
 
-    print(f"ERROR: {error}")
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("⛔ No tienes permisos para usar este comando.")
+        return
 
-    if interaction.response.is_done():
+    if isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("⛔ A DiDo Admin le faltan permisos para hacer eso.")
+        return
 
-        await interaction.followup.send(
-            "❌ Ha ocurrido un error.",
-            ephemeral=True
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("⚠️ Faltan argumentos. Usa `!ayuda`.")
+        return
+
+    if isinstance(error, commands.MemberNotFound):
+        await ctx.send("❌ No encuentro a ese usuario.")
+        return
+
+    if isinstance(error, commands.RoleNotFound):
+        await ctx.send("❌ No encuentro ese rol.")
+        return
+
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("⚠️ El argumento no es válido.")
+        return
+
+    print(f"❌ Error de comando: {error}")
+
+
+# =========================================================
+# YOUTUBE
+# =========================================================
+
+def cargar_estado_youtube():
+    if not os.path.exists(YOUTUBE_STATE_FILE):
+        return None
+
+    try:
+        with open(YOUTUBE_STATE_FILE, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+            return datos.get("video_id")
+    except Exception:
+        return None
+
+
+def guardar_estado_youtube(video_id):
+    try:
+        with open(YOUTUBE_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"video_id": video_id}, f)
+    except Exception as e:
+        print(f"⚠️ No se pudo guardar estado de YouTube: {e}")
+
+
+async def obtener_channel_id():
+    """
+    Obtiene el ID del canal a partir del enlace @handle.
+    Se usa yt-dlp para evitar tener que configurar una API de YouTube.
+    """
+    try:
+        proceso = await asyncio.create_subprocess_exec(
+            "python",
+            "-m",
+            "yt_dlp",
+            "--flat-playlist",
+            "--playlist-end",
+            "1",
+            "--print",
+            "channel_id",
+            YOUTUBE_URL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
 
-    else:
+        stdout, stderr = await proceso.communicate()
 
-        await interaction.response.send_message(
-            "❌ Ha ocurrido un error.",
-            ephemeral=True
+        if proceso.returncode != 0:
+            print(
+                "❌ No pude obtener el ID de YouTube:\n"
+                + stderr.decode(errors="ignore")
+            )
+            return None
+
+        texto = stdout.decode(errors="ignore").strip()
+
+        for linea in texto.splitlines():
+            linea = linea.strip()
+            if re.fullmatch(r"UC[a-zA-Z0-9_-]{20,}", linea):
+                return linea
+
+    except Exception as e:
+        print(f"❌ Error obteniendo ID de YouTube: {e}")
+
+    return None
+
+
+async def obtener_ultimo_video(channel_id):
+    url = (
+        "https://www.youtube.com/feeds/videos.xml"
+        f"?channel_id={channel_id}"
+    )
+
+    timeout = aiohttp.ClientTimeout(total=20)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"}
+        ) as respuesta:
+
+            if respuesta.status != 200:
+                print(
+                    f"⚠️ RSS de YouTube devolvió HTTP {respuesta.status}"
+                )
+                return None
+
+            contenido = await respuesta.text()
+
+    root = ET.fromstring(contenido)
+
+    ns = {
+        "atom": "http://www.w3.org/2005/Atom",
+        "yt": "http://www.youtube.com/xml/schemas/2015"
+    }
+
+    entrada = root.find("atom:entry", ns)
+
+    if entrada is None:
+        return None
+
+    video_id = entrada.findtext("yt:videoId", default="", namespaces=ns)
+    titulo = entrada.findtext("atom:title", default="Nuevo vídeo", namespaces=ns)
+    enlace = entrada.find("atom:link", ns)
+
+    video_url = (
+        enlace.attrib.get("href")
+        if enlace is not None
+        else f"https://www.youtube.com/watch?v={video_id}"
+    )
+
+    publicado = entrada.findtext(
+        "atom:published",
+        default="",
+        namespaces=ns
+    )
+
+    return {
+        "id": video_id,
+        "titulo": titulo,
+        "url": video_url,
+        "publicado": publicado
+    }
+
+
+youtube_channel_id = None
+youtube_primera_comprobacion = True
+
+
+@tasks.loop(minutes=YOUTUBE_INTERVALO_MINUTOS)
+async def youtube_checker():
+    global youtube_channel_id
+    global youtube_primera_comprobacion
+
+    if youtube_channel_id is None:
+        youtube_channel_id = await obtener_channel_id()
+
+        if youtube_channel_id:
+            print(f"✅ Canal YouTube detectado: {youtube_channel_id}")
+        else:
+            print("⚠️ No se pudo detectar el canal de YouTube.")
+            return
+
+    try:
+        video = await obtener_ultimo_video(youtube_channel_id)
+
+        if not video:
+            return
+
+        ultimo_guardado = cargar_estado_youtube()
+
+        # Primera comprobación: guardar el vídeo actual sin anunciarlo.
+        # Así no manda un aviso falso al arrancar Railway.
+        if ultimo_guardado is None or youtube_primera_comprobacion:
+            guardar_estado_youtube(video["id"])
+            youtube_primera_comprobacion = False
+            print(
+                f"📺 YouTube inicializado con: "
+                f"{video['titulo']}"
+            )
+            return
+
+        if video["id"] == ultimo_guardado:
+            return
+
+        guardar_estado_youtube(video["id"])
+
+        canal_youtube = canal(CANAL_YOUTUBE)
+
+        if not canal_youtube:
+            print(
+                f"⚠️ No encuentro el canal Discord de YouTube: "
+                f"{CANAL_YOUTUBE}"
+            )
+            return
+
+        embed = discord.Embed(
+            title="📺 ¡Nuevo vídeo de ZerroNova!",
+            description=f"**{video['titulo']}**\n\n{video['url']}",
+            color=discord.Color.red(),
+            timestamp=discord.utils.utcnow()
         )
+
+        embed.set_footer(text="DiDo Admin • YouTube")
+
+        await canal_youtube.send(embed=embed)
+
+        print(
+            f"📺 Nuevo vídeo anunciado: {video['titulo']}"
+        )
+
+    except Exception as e:
+        print(f"❌ Error comprobando YouTube: {e}")
+
+
+@youtube_checker.before_loop
+async def before_youtube_checker():
+    await bot.wait_until_ready()
 
 
 # =========================================================
@@ -625,11 +819,8 @@ async def error_comando(
 # =========================================================
 
 if not TOKEN_DISCORD:
-
     raise RuntimeError(
-        "❌ Falta TOKEN_DISCORD en las variables de Railway."
+        "Falta TOKEN_DISCORD en las variables de entorno."
     )
 
-
 bot.run(TOKEN_DISCORD)
-
