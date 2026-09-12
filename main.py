@@ -12,9 +12,13 @@ from discord import app_commands
 
 TOKEN_DISCORD = os.getenv("TOKEN_DISCORD")
 
-# ID del creador de DiDo Admin
+# Tu ID de Discord
 ID_CREADOR = 1439941330355879978
 
+# ID DEL SERVIDOR DONDE QUIERES LOS COMANDOS
+ID_SERVIDOR = 1544430992364802178
+
+# Nombre del rol de administrador
 NOMBRE_ROL_ADMIN = "DiDo Admin"
 
 
@@ -58,7 +62,7 @@ async def comprobar_creador(interaction: discord.Interaction) -> bool:
 
 
 # =========================================================
-# ROL ADMIN
+# OBTENER / CREAR ROL ADMIN
 # =========================================================
 
 async def obtener_rol_admin(guild: discord.Guild):
@@ -96,21 +100,41 @@ async def on_ready():
     print(f"🆔 ID: {bot.user.id}")
     print("====================================")
 
+    guild = discord.Object(id=ID_SERVIDOR)
+
     try:
-        comandos = await bot.tree.sync()
-        print(f"✅ {len(comandos)} comandos sincronizados.")
+        # Copiar los comandos al servidor específico
+        bot.tree.copy_global_to(guild=guild)
+
+        # Sincronizarlos inmediatamente
+        comandos = await bot.tree.sync(guild=guild)
+
+        print(
+            f"✅ {len(comandos)} comandos sincronizados "
+            f"en el servidor {ID_SERVIDOR}."
+        )
 
     except Exception as error:
         print(f"❌ Error sincronizando comandos: {error}")
 
-    for guild in bot.guilds:
+    # Preparar el rol en el servidor
+    servidor = bot.get_guild(ID_SERVIDOR)
 
-        rol = await obtener_rol_admin(guild)
+    if servidor:
+
+        rol = await obtener_rol_admin(servidor)
 
         if rol:
             print(
-                f"🛡️ Rol '{NOMBRE_ROL_ADMIN}' preparado en {guild.name}"
+                f"🛡️ Rol '{NOMBRE_ROL_ADMIN}' preparado "
+                f"en {servidor.name}"
             )
+
+        else:
+            print("❌ No pude crear/obtener el rol DiDo Admin.")
+
+    else:
+        print("❌ DiDo Admin no está dentro del servidor.")
 
 
 # =========================================================
@@ -143,8 +167,8 @@ async def admin(
 
     if rol >= interaction.guild.me.top_role:
         await interaction.response.send_message(
-            "❌ Mi rol está por debajo de DiDo Admin. "
-            "Pon el rol de DiDo Admin por encima.",
+            "❌ Mi rol está por debajo del rol DiDo Admin. "
+            "Pon el rol del bot por encima.",
             ephemeral=True
         )
         return
@@ -549,7 +573,7 @@ async def info(
         "🔨 Moderación\n"
         "🎭 Roles\n"
         "🧹 Limpieza\n"
-        "🔐 Protección de comandos\n\n"
+        "🔐 Comandos protegidos\n\n"
         "Creado por Ares."
     )
 
@@ -570,7 +594,7 @@ async def on_message(
 
 
 # =========================================================
-# ERROR
+# ERRORES
 # =========================================================
 
 @bot.tree.error
@@ -597,7 +621,7 @@ async def error_comando(
 
 
 # =========================================================
-# INICIO
+# ARRANQUE
 # =========================================================
 
 if not TOKEN_DISCORD:
@@ -608,3 +632,4 @@ if not TOKEN_DISCORD:
 
 
 bot.run(TOKEN_DISCORD)
+
