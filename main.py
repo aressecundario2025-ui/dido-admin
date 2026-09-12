@@ -1,96 +1,32 @@
-import discord
-from discord.ext import commands
-from openai import OpenAI
 import os
-import asyncio
-import datetime
+from datetime import timedelta
+
+import discord
+from discord import app_commands
+from discord.ext import commands
 
 
-# ==================================================
+# =========================================================
 # CONFIGURACIÓN
-# ==================================================
+# =========================================================
 
 TOKEN_DISCORD = os.getenv("TOKEN_DISCORD")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-ID_CREADOR = 1439941330355879978
-
-# Canal donde funciona !dido
-CANAL_DIDO = 1548067753443721257
+# PON AQUÍ TU ID DE DISCORD
+ID_CREADOR = 123456789012345678
 
 
-# ==================================================
-# INSULTOS
-# ==================================================
-
-INSULTOS = [
-    "idiota",
-    "imbecil",
-    "imbécil",
-    "tonto",
-    "gilipollas",
-    "cabron",
-    "cabrón",
-    "hijo de puta",
-    "hijoputa",
-    "puta",
-    "mierda",
-    "subnormal",
-    "payaso",
-    "inutil",
-    "inútil",
-    "estupido",
-    "estúpido"
-]
-
-
-# ==================================================
-# PERSONALIDAD
-# ==================================================
-
-INSTRUCCIONES_BOT = """
-Eres DiDo, un robot de escritorio que estas amargado y te gusta ser sarcastico y meterte con la gente.
-
-Tu personalidad es sarcástica, irónica y muy vacilona,tienes mucho humor y ayudas.
-
-
-REGLA DE ORO:
-Tus respuestas deben ser MUY CORTAS.
-Máximo 2 o 3 frases cortas.
-Sé directo y no te enrolles.
-
-Hablas español de España.
-
-Si el usuario que te habla es tu creador,
-llámale "Creador" o "Jefe".
-
-El ID del creador es:
-305056920161746965
-"""
-
-
-# ==================================================
-# GROQ
-# ==================================================
-
-if not GROQ_API_KEY:
-    raise RuntimeError(
-        "Falta la variable GROQ_API_KEY en Railway."
-    )
-
-ai = OpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
-
-
-# ==================================================
-# DISCORD
-# ==================================================
+# =========================================================
+# INTENTS
+# =========================================================
 
 intents = discord.Intents.default()
-intents.message_content = True
 intents.members = True
+
+
+# =========================================================
+# BOT
+# =========================================================
 
 bot = commands.Bot(
     command_prefix="!",
@@ -98,263 +34,538 @@ bot = commands.Bot(
 )
 
 
-# ==================================================
-# USUARIOS PENSANDO
-# ==================================================
-
-usuarios_pensando = set()
-
-
-# ==================================================
-# BOT LISTO
-# ==================================================
+# =========================================================
+# CUANDO EL BOT SE CONECTA
+# =========================================================
 
 @bot.event
 async def on_ready():
+    print(f"================================")
+    print(f"✅ DiDo-ADMIN conectado")
+    print(f"🤖 Usuario: {bot.user}")
+    print(f"🆔 ID: {bot.user.id}")
+    print(f"================================")
 
-    print("=================================")
-    print("🤖 DiDo 1.0")
-    print("=================================")
-    print(f"Conectado como: {bot.user}")
-    print(f"ID del bot: {bot.user.id}")
-    print(f"Canal DiDo: {CANAL_DIDO}")
-    print("IA: Groq")
-    print("Modelo: openai/gpt-oss-20b")
-    print("Silencios por insultos: 1 HORA")
-    print("=================================")
-
-
-# ==================================================
-# COMANDO !CREADOR
-# ==================================================
-
-@bot.command()
-async def creador(ctx):
-
-    if ctx.author.id == ID_CREADOR:
-
-        await ctx.send(
-            "¡Hola, mi señor y creador! 😎 A sus órdenes."
-        )
-
-    else:
-
-        await ctx.send(
-            f"Hola {ctx.author.name}. "
-            "Mi creador es un usuario secreto. 🤫"
-        )
+    try:
+        comandos = await bot.tree.sync()
+        print(f"✅ {len(comandos)} comandos / sincronizados")
+    except Exception as e:
+        print(f"❌ Error sincronizando comandos: {e}")
 
 
-# ==================================================
-# FUNCIÓN DE IA
-# ==================================================
+# =========================================================
+# COMPROBAR ADMIN
+# =========================================================
 
-def preguntar_ia(pregunta, usuario_id):
+def es_admin(interaction: discord.Interaction) -> bool:
 
-    instruccion = (
-        f"{INSTRUCCIONES_BOT}\n\n"
-        f"ID del usuario actual: {usuario_id}\n"
-        f"ID del creador: {ID_CREADOR}\n"
+    if interaction.user.id == ID_CREADOR:
+        return True
+
+    if not isinstance(interaction.user, discord.Member):
+        return False
+
+    return interaction.user.guild_permissions.administrator
+
+
+# =========================================================
+# /PING
+# =========================================================
+
+@bot.tree.command(
+    name="ping",
+    description="Comprueba si DiDo está funcionando"
+)
+async def ping(interaction: discord.Interaction):
+
+    latencia = round(bot.latency * 1000)
+
+    await interaction.response.send_message(
+        f"🏓 Pong! **{latencia} ms**"
     )
 
-    respuesta = ai.chat.completions.create(
-        model="openai/gpt-oss-20b",
-        messages=[
-            {
-                "role": "system",
-                "content": instruccion
-            },
-            {
-                "role": "user",
-                "content": pregunta
-            }
-        ],
-        temperature=0.7,
-        max_tokens=300
+
+# =========================================================
+# /ADMIN
+# =========================================================
+
+@bot.tree.command(
+    name="admin",
+    description="Da el rol ADMIN a un usuario"
+)
+@app_commands.describe(
+    usuario="Usuario al que quieres dar el rol ADMIN"
+)
+async def admin(
+    interaction: discord.Interaction,
+    usuario: discord.Member
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos para usar este comando.",
+            ephemeral=True
+        )
+        return
+
+    rol = discord.utils.get(
+        interaction.guild.roles,
+        name="ADMIN"
     )
 
-    if not respuesta.choices:
-        raise Exception(
-            "La IA no devolvió ninguna respuesta."
-        )
-
-    texto = respuesta.choices[0].message.content
-
-    if not texto:
-        raise Exception(
-            "La IA devolvió una respuesta vacía."
-        )
-
-    return texto.strip()
-
-
-# ==================================================
-# COMANDO !DIDO
-# ==================================================
-
-@bot.command()
-async def dido(ctx, *, pregunta: str = None):
-
-    # Solo funciona en el canal de DiDo
-    if ctx.channel.id != CANAL_DIDO:
-        return
-
-    if not pregunta:
-
-        await ctx.send(
-            "Escribe algo después de `!dido`. 🤖"
+    if rol is None:
+        await interaction.response.send_message(
+            "❌ No existe un rol llamado `ADMIN`.",
+            ephemeral=True
         )
         return
 
-    # Evitar varias preguntas simultáneas
-    if ctx.author.id in usuarios_pensando:
-
-        await ctx.reply(
-            "🤖 Bro, déjame pensar... 😂"
+    if rol >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ Mi rol debe estar por encima del rol `ADMIN`.",
+            ephemeral=True
         )
         return
-
-    usuarios_pensando.add(ctx.author.id)
 
     try:
 
-        for intento in range(1, 4):
+        await usuario.add_roles(rol)
 
-            try:
-
-                async with ctx.typing():
-
-                    respuesta = await asyncio.to_thread(
-                        preguntar_ia,
-                        pregunta,
-                        ctx.author.id
-                    )
-
-                await ctx.reply(respuesta)
-
-                print(
-                    f"✅ Groq respondió a "
-                    f"{ctx.author} "
-                    f"(intento {intento}/3)"
-                )
-
-                return
-
-            except Exception as e:
-
-                print(
-                    f"❌ Error Groq "
-                    f"(intento {intento}/3): {e}"
-                )
-
-                if intento < 3:
-                    await asyncio.sleep(3)
-
-        await ctx.send(
-            "🤖 La IA está teniendo problemas. "
-            "Prueba otra vez en unos segundos."
+        await interaction.response.send_message(
+            f"👑 {usuario.mention} ahora tiene el rol **ADMIN**."
         )
 
-    finally:
+    except discord.Forbidden:
 
-        usuarios_pensando.discard(ctx.author.id)
+        await interaction.response.send_message(
+            "❌ No puedo darle ese rol.",
+            ephemeral=True
+        )
 
 
-# ==================================================
-# MODERACIÓN AUTOMÁTICA
-# ==================================================
+# =========================================================
+# /KICK
+# =========================================================
 
-@bot.event
-async def on_message(message):
+@bot.tree.command(
+    name="kick",
+    description="Expulsa a un usuario del servidor"
+)
+@app_commands.describe(
+    usuario="Usuario que quieres expulsar",
+    motivo="Motivo de la expulsión"
+)
+async def kick(
+    interaction: discord.Interaction,
+    usuario: discord.Member,
+    motivo: str = "Sin motivo"
+):
 
-    # Ignorar bots
-    if message.author.bot:
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
         return
 
-    # Ignorar mensajes privados
-    if message.guild is None:
+    if usuario == interaction.user:
+        await interaction.response.send_message(
+            "❌ No puedes expulsarte a ti mismo.",
+            ephemeral=True
+        )
         return
 
-    texto = message.content.lower()
+    try:
 
-    # Detectar insultos
-    insulto_detectado = any(
-        insulto in texto
-        for insulto in INSULTOS
+        await usuario.kick(reason=motivo)
+
+        await interaction.response.send_message(
+            f"👢 **Usuario expulsado**\n"
+            f"👤 Usuario: {usuario.mention}\n"
+            f"📝 Motivo: {motivo}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ No puedo expulsar a ese usuario.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# /BAN
+# =========================================================
+
+@bot.tree.command(
+    name="ban",
+    description="Banea a un usuario"
+)
+@app_commands.describe(
+    usuario="Usuario que quieres banear",
+    motivo="Motivo del baneo"
+)
+async def ban(
+    interaction: discord.Interaction,
+    usuario: discord.Member,
+    motivo: str = "Sin motivo"
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+        return
+
+    if usuario == interaction.user:
+        await interaction.response.send_message(
+            "❌ No puedes banearte a ti mismo.",
+            ephemeral=True
+        )
+        return
+
+    try:
+
+        await usuario.ban(
+            reason=motivo
+        )
+
+        await interaction.response.send_message(
+            f"🔨 **Usuario baneado**\n"
+            f"👤 Usuario: {usuario.mention}\n"
+            f"📝 Motivo: {motivo}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ No puedo banear a ese usuario.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# /UNBAN
+# =========================================================
+
+@bot.tree.command(
+    name="unban",
+    description="Desbanea a un usuario usando su ID"
+)
+@app_commands.describe(
+    usuario_id="ID de Discord del usuario"
+)
+async def unban(
+    interaction: discord.Interaction,
+    usuario_id: str
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+        return
+
+    try:
+
+        user_id = int(usuario_id)
+
+        usuario = await bot.fetch_user(
+            user_id
+        )
+
+        await interaction.guild.unban(
+            usuario
+        )
+
+        await interaction.response.send_message(
+            f"✅ **{usuario}** ha sido desbaneado."
+        )
+
+    except ValueError:
+
+        await interaction.response.send_message(
+            "❌ La ID introducida no es válida.",
+            ephemeral=True
+        )
+
+    except discord.NotFound:
+
+        await interaction.response.send_message(
+            "❌ Ese usuario no está baneado.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ No tengo permiso para desbanear.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# /TIMEOUT
+# =========================================================
+
+@bot.tree.command(
+    name="timeout",
+    description="Pone un timeout a un usuario"
+)
+@app_commands.describe(
+    usuario="Usuario al que quieres poner timeout",
+    minutos="Duración del timeout en minutos",
+    motivo="Motivo"
+)
+async def timeout(
+    interaction: discord.Interaction,
+    usuario: discord.Member,
+    minutos: int,
+    motivo: str = "Sin motivo"
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+        return
+
+    if minutos < 1:
+
+        await interaction.response.send_message(
+            "❌ Los minutos deben ser mayores que 0.",
+            ephemeral=True
+        )
+        return
+
+    if minutos > 40320:
+
+        await interaction.response.send_message(
+            "❌ El máximo es de 28 días.",
+            ephemeral=True
+        )
+        return
+
+    try:
+
+        duracion = timedelta(
+            minutes=minutos
+        )
+
+        await usuario.timeout(
+            duracion,
+            reason=motivo
+        )
+
+        await interaction.response.send_message(
+            f"⏱️ **Timeout aplicado**\n"
+            f"👤 Usuario: {usuario.mention}\n"
+            f"⏳ Duración: **{minutos} minutos**\n"
+            f"📝 Motivo: {motivo}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ No puedo ponerle timeout a ese usuario.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# /UNTIMEOUT
+# =========================================================
+
+@bot.tree.command(
+    name="untimeout",
+    description="Quita el timeout de un usuario"
+)
+@app_commands.describe(
+    usuario="Usuario al que quieres quitar el timeout"
+)
+async def untimeout(
+    interaction: discord.Interaction,
+    usuario: discord.Member
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+        return
+
+    try:
+
+        await usuario.timeout(
+            None,
+            reason="Timeout eliminado"
+        )
+
+        await interaction.response.send_message(
+            f"🔊 Timeout eliminado a {usuario.mention}."
+        )
+
+    except discord.Forbidden:
+
+        await interaction.response.send_message(
+            "❌ No puedo quitarle el timeout.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# /CLEAR
+# =========================================================
+
+@bot.tree.command(
+    name="clear",
+    description="Borra mensajes del canal"
+)
+@app_commands.describe(
+    cantidad="Cantidad de mensajes a borrar (1-100)"
+)
+async def clear(
+    interaction: discord.Interaction,
+    cantidad: int
+):
+
+    if not es_admin(interaction):
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+        return
+
+    if cantidad < 1 or cantidad > 100:
+
+        await interaction.response.send_message(
+            "❌ La cantidad debe estar entre 1 y 100.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(
+        ephemeral=True
     )
 
-    if insulto_detectado:
+    try:
 
-        miembro = message.author
+        mensajes = await interaction.channel.purge(
+            limit=cantidad
+        )
 
-        try:
+        await interaction.followup.send(
+            f"🧹 Se han borrado **{len(mensajes)} mensajes**.",
+            ephemeral=True
+        )
 
-            # No puede silenciar al propietario
-            if miembro == message.guild.owner:
+    except discord.Forbidden:
 
-                await message.channel.send(
-                    f"⚠️ {miembro.mention}, eres el propietario. "
-                    "No puedo silenciarte. 😂"
-                )
-
-            # No puede silenciar roles iguales o superiores
-            elif miembro.top_role >= message.guild.me.top_role:
-
-                await message.channel.send(
-                    f"⚠️ No puedo silenciar a "
-                    f"{miembro.mention}: su rol está "
-                    "al mismo nivel o por encima del mío."
-                )
-
-            # Silenciar durante 1 hora
-            else:
-
-                await miembro.timeout(
-                    datetime.timedelta(hours=1),
-                    reason=(
-                        "Insulto detectado "
-                        "automáticamente por DiDo"
-                    )
-                )
-
-                await message.channel.send(
-                    f"🔇 {miembro.mention} ha sido "
-                    "**silenciado durante 1 hora** "
-                    "por insultar."
-                )
-
-                print(
-                    f"🔇 SILENCIO 1 HORA: "
-                    f"{miembro} "
-                    f"(ID: {miembro.id})"
-                )
-
-                return
-
-        except discord.Forbidden:
-
-            await message.channel.send(
-                "⚠️ No tengo permisos para silenciar "
-                "a ese usuario."
-            )
-
-        except discord.HTTPException as e:
-
-            print(
-                f"❌ Error de Discord al silenciar: {e}"
-            )
-
-    # Procesar comandos
-    await bot.process_commands(message)
+        await interaction.followup.send(
+            "❌ No tengo permiso para borrar mensajes.",
+            ephemeral=True
+        )
 
 
-# ==================================================
-# INICIAR BOT
-# ==================================================
+# =========================================================
+# /INFO
+# =========================================================
+
+@bot.tree.command(
+    name="info",
+    description="Muestra información de un usuario"
+)
+@app_commands.describe(
+    usuario="Usuario del que quieres información"
+)
+async def info(
+    interaction: discord.Interaction,
+    usuario: discord.Member
+):
+
+    embed = discord.Embed(
+        title="👤 Información del usuario",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="Usuario",
+        value=usuario.mention,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Nombre",
+        value=str(usuario),
+        inline=False
+    )
+
+    embed.add_field(
+        name="ID",
+        value=str(usuario.id),
+        inline=False
+    )
+
+    embed.add_field(
+        name="Cuenta creada",
+        value=discord.utils.format_dt(
+            usuario.created_at,
+            style="F"
+        ),
+        inline=False
+    )
+
+    if usuario.joined_at:
+        embed.add_field(
+            name="Entró al servidor",
+            value=discord.utils.format_dt(
+                usuario.joined_at,
+                style="F"
+            ),
+            inline=False
+        )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# ERROR GENERAL DE COMANDOS
+# =========================================================
+
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError
+):
+
+    print(f"❌ Error en comando: {error}")
+
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            "❌ Ha ocurrido un error al ejecutar el comando.",
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            "❌ Ha ocurrido un error al ejecutar el comando.",
+            ephemeral=True
+        )
+
+
+# =========================================================
+# ARRANCAR BOT
+# =========================================================
 
 if not TOKEN_DISCORD:
-    raise RuntimeError(
-        "Falta la variable TOKEN_DISCORD en Railway."
-    )
+
+    print("❌ ERROR: No existe la variable TOKEN_DISCORD.")
+    raise SystemExit(1)
+
 
 bot.run(TOKEN_DISCORD)
