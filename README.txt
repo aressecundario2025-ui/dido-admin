@@ -1,60 +1,26 @@
-DIDO ADMIN
-===========
+DiDo Admin - IP Minecraft
 
-Funciones incluidas:
-- !ban
-- !unban
-- !kick
-- !silenciar / !mute / !timeout
-- !unsilenciar / !unmute / !untimeout
-- !warn
-- !warns
-- !clearwarns
-- !clear
-- !lock
-- !unlock
-- !slowmode
-- !addrole
-- !removerole
-- !userinfo
-- !serverinfo
-- !permisos
-- !ayuda
-- Anti-spam automático
-- Registro de baneos
-- Avisos automáticos de YouTube
+CANAL CONFIGURADO:
+1549058205051527198
 
-Canal de baneos:
-1546534756441653261
+IP DEL SERVIDOR:
+zerrohorror.mcsh.io
 
-Canal de YouTube:
-1546538212896280596
+FUNCIONAMIENTO:
+Cuando alguien escriba exactamente "ip" en el canal configurado,
+DiDo Admin responderá automáticamente con:
 
-YouTube:
-https://youtube.com/@zerronova2026_yt
+🌐 IP DEL SERVIDOR
+zerrohorror.mcsh.io
+🎮 ¡Nos vemos dentro!
 
-VARIABLE DE RAILWAY
-===================
+VARIABLE DE ENTORNO:
+TOKEN_DISCORD = token del bot de Discord.
 
-TOKEN_DISCORD = token del bot DiDo Admin
+IMPORTANTE:
+Activa MESSAGE CONTENT INTENT en Discord Developer Portal.
+El bot necesita permiso para ver el canal y enviar mensajes.
 
-IMPORTANTE
-==========
-El bot necesita, como mínimo:
-- View Channels
-- Send Messages
-- Embed Links
-- Read Message History
-- Manage Messages
-- Kick Members
-- Ban Members
-- Moderate Members
-- Manage Channels
-- Manage Roles
-
-Y en Discord Developer Portal:
-Bot -> Privileged Gateway Intents:
-- Message Content Intent: ACTIVADO
-- Server Members Intent: ACTIVADO
-
-El sistema de YouTube usa RSS y yt-dlp, por lo que no necesitas una API Key de YouTube.
+Para usar el bot en otro servidor, invita el mismo bot al servidor.
+La respuesta automática seguirá limitada al canal cuyo ID esté
+configurado en CANAL_IP.
