@@ -12,7 +12,7 @@ TOKEN_DISCORD = os.getenv("TOKEN_DISCORD")
 CANAL_IP = 1549058205051527198
 
 # IP del servidor Minecraft
-IP_SERVIDOR = "zerrohorror.mcsh.io"
+IP_SERVIDOR = " horrorserv-gLWC.aternos.me"
 
 # Mensaje personalizado
 MENSAJE_IP = (
