@@ -3,23 +3,13 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-# =========================
-# CONFIGURACIÓN
-# =========================
-
 TOKEN = os.getenv("TOKEN_DISCORD")
 
-# Canal donde DiDo responde a:
-# web / ip / discord / ayuda
 CANAL_INFO = 1549058205051527198
 
 WEB = "https://pillar-arena-survival.base44.app/"
 IP = "minepillarss.minehut.gg"
 DISCORD_INVITE = "https://discord.gg/ajfMu4ryJU"
-
-# =========================
-# INTENTS
-# =========================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -31,141 +21,97 @@ bot = commands.Bot(
 )
 
 
-# =========================
-# FUNCIONES
-# =========================
-
-def es_administrador(member: discord.Member) -> bool:
+def es_admin(member):
     return member.guild_permissions.administrator
 
-
-# =========================
-# EVENTO: BOT CONECTADO
-# =========================
 
 @bot.event
 async def on_ready():
     print(f"DiDo Admin conectado como {bot.user}")
-    print(f"ID del bot: {bot.user.id}")
+    print(f"ID: {bot.user.id}")
 
     try:
-        comandos = await bot.tree.sync()
-        print(f"{len(comandos)} comandos sincronizados.")
+        synced = await bot.tree.sync()
+        print(f"{len(synced)} comandos sincronizados.")
     except Exception as e:
         print(f"Error sincronizando comandos: {e}")
 
 
-# =========================
-# MENSAJES DEL CANAL WEB/IP
-# =========================
-
 @bot.event
-async def on_message(message: discord.Message):
+async def on_message(message):
 
-    # Ignorar mensajes de bots
     if message.author.bot:
         return
 
-    # Solo responder automáticamente en el canal indicado
+    # Canal específico para web, IP y Discord
     if message.channel.id == CANAL_INFO:
 
         texto = message.content.strip().lower()
 
-        # WEB
         if texto == "web":
             embed = discord.Embed(
                 title="🌐 Web de Pilares",
-                description=(
-                    "Aquí tienes la web oficial de **Pilares**.\n\n"
-                    f"🔗 {WEB}"
-                ),
+                description=f"🔗 {WEB}",
                 color=discord.Color.blurple()
             )
-
             await message.channel.send(embed=embed)
             return
 
-        # IP
         if texto == "ip":
             embed = discord.Embed(
                 title="🎮 IP de Pilares",
-                description=(
-                    "Conéctate al servidor usando esta dirección:\n\n"
-                    f"```{IP}```"
-                ),
+                description=f"```{IP}```",
                 color=discord.Color.green()
             )
-
             await message.channel.send(embed=embed)
             return
 
-        # DISCORD
         if texto == "discord":
             embed = discord.Embed(
                 title="💬 Discord de Pilares",
-                description=(
-                    "Únete a nuestra comunidad:\n\n"
-                    f"{DISCORD_INVITE}"
-                ),
+                description=DISCORD_INVITE,
                 color=discord.Color.purple()
             )
-
             await message.channel.send(embed=embed)
             return
 
-        # AYUDA
         if texto == "ayuda":
             embed = discord.Embed(
                 title="📋 Información de Pilares",
                 description=(
-                    "**web** → enlace de la web\n"
-                    "**ip** → IP del servidor Minecraft\n"
-                    "**discord** → enlace del Discord"
+                    "**web** → Web de Pilares\n"
+                    "**ip** → IP del servidor\n"
+                    "**discord** → Discord de Pilares"
                 ),
                 color=discord.Color.blurple()
             )
-
             await message.channel.send(embed=embed)
             return
 
-    # Procesar comandos slash
     await bot.process_commands(message)
 
-
-# =========================
-# /ADMIN
-# =========================
 
 @bot.tree.command(
     name="admin",
     description="Da el rol DiDo Admin a un usuario."
 )
 @app_commands.describe(
-    usuario="Usuario al que quieres dar el rol DiDo Admin"
+    usuario="Usuario al que quieres dar DiDo Admin"
 )
-async def admin(
-    interaction: discord.Interaction,
-    usuario: discord.Member
-):
+async def admin(interaction: discord.Interaction, usuario: discord.Member):
 
-    # Comprobar permisos
-    if not isinstance(interaction.user, discord.Member):
-        return
-
-    if not es_administrador(interaction.user):
+    if not es_admin(interaction.user):
         await interaction.response.send_message(
-            "❌ Necesitas permisos de **Administrador**.",
+            "❌ Necesitas permisos de Administrador.",
             ephemeral=True
         )
         return
 
-    # Buscar rol
     rol = discord.utils.get(
         interaction.guild.roles,
         name="DiDo Admin"
     )
 
-    # Crear rol si no existe
     if rol is None:
         try:
             rol = await interaction.guild.create_role(
@@ -179,16 +125,13 @@ async def admin(
             )
             return
 
-    # Comprobar jerarquía
     if rol >= interaction.guild.me.top_role:
         await interaction.response.send_message(
-            "❌ El rol **DiDo Admin** está por encima o al mismo nivel "
-            "que mi rol. Coloca mi rol por encima de DiDo Admin.",
+            "❌ Mi rol debe estar por encima de `DiDo Admin`.",
             ephemeral=True
         )
         return
 
-    # Asignar rol
     try:
         await usuario.add_roles(
             rol,
@@ -196,8 +139,115 @@ async def admin(
         )
 
         await interaction.response.send_message(
-            f"✅ {usuario.mention} ahora tiene el rol **DiDo Admin**."
+            f"✅ {usuario.mention} ahora tiene **DiDo Admin**."
         )
 
-    except discord.For
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo asignar el rol. "
+            "Coloca mi rol por encima de `DiDo Admin`.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="quitaradmin",
+    description="Quita el rol DiDo Admin a un usuario."
+)
+@app_commands.describe(
+    usuario="Usuario al que quieres quitar DiDo Admin"
+)
+async def quitaradmin(
+    interaction: discord.Interaction,
+    usuario: discord.Member
+):
+
+    if not es_admin(interaction.user):
+        await interaction.response.send_message(
+            "❌ Necesitas permisos de Administrador.",
+            ephemeral=True
+        )
+        return
+
+    rol = discord.utils.get(
+        interaction.guild.roles,
+        name="DiDo Admin"
+    )
+
+    if rol is None:
+        await interaction.response.send_message(
+            "ℹ️ El rol DiDo Admin no existe.",
+            ephemeral=True
+        )
+        return
+
+    if rol >= interaction.guild.me.top_role:
+        await interaction.response.send_message(
+            "❌ Mi rol debe estar por encima de `DiDo Admin`.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await usuario.remove_roles(
+            rol,
+            reason=f"Retirado por {interaction.user}"
+        )
+
+        await interaction.response.send_message(
+            f"✅ Se ha quitado **DiDo Admin** a {usuario.mention}."
+        )
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo quitar el rol.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="ayuda",
+    description="Muestra los comandos de DiDo Admin."
+)
+async def ayuda(interaction: discord.Interaction):
+
+    embed = discord.Embed(
+        title="🤖 DiDo Admin",
+        description="Panel de administración de Pilares.",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="🛡️ Administración",
+        value=(
+            "`/admin @usuario` → Dar DiDo Admin\n"
+            "`/quitaradmin @usuario` → Quitar DiDo Admin"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📢 Canal de información",
+        value=(
+            f"<#{CANAL_INFO}>\n\n"
+            "`web` → Web\n"
+            "`ip` → IP\n"
+            "`discord` → Discord"
+        ),
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+
+if not TOKEN:
+    raise RuntimeError(
+        "Falta la variable TOKEN_DISCORD en Railway."
+    )
+
+
+bot.run(TOKEN)
 
