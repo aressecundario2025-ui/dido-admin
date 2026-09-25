@@ -10,15 +10,16 @@ from discord import app_commands
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+# Canales donde se publicará el panel
 CANALES_PANEL = [
     1434297124539076738,
     1551198802164064266
 ]
 
-# LOS DOS SON ROLES DE SOPORTE
-ROL_SOPORTE_1 = 1434289818992382084
-ROL_SOPORTE_2 = 1552374542909833246
+# ÚNICO ROL DE SOPORTE
+ROL_SOPORTE = 1552374542909833246
 
+# Logo dentro de Railway
 LOGO_PATH = "logo.png"
 
 COLOR = discord.Color.from_rgb(88, 101, 242)
@@ -40,135 +41,25 @@ bot = commands.Bot(
 
 
 # =========================================================
-# EMOJIS
+# TEXTO DE REGLAS
 # =========================================================
 
-EMOJI_IDS = {
-    "ayuda": "54967105671957",
-    "atencion": "1219816049822666893",
-    "reglas": "3057195671616",
-    "regla1": "0974966496677",
-    "regla2": "30571957289",
-    "regla3": "205719567E93093984",
-    "regla4": "4947569375939420",
-    "regla5": "30572935723",
-    "rapido": "1216991711872684052",
-    "rapido2": "1216999826248437784",
-    "paciencia": "1195801251850502175"
-}
+MENSAJE_REGLAS = """🎫 **¿Necesitas Ayuda? Abre un ticket en la categoría que necesitas! Ten paciencia a la hora de abrir ticket o de lo contrario serás sancionado!** ⚠️
 
-EMOJIS = {}
+📋 **Reglas** 📋
+
+⏳ *1)* **Ten paciencia a la hora de abrir ticket!** 🕐
+
+🚫 *2)* **No insultar al equipo del staff!** ⚠️
+
+📌 *3)* **Estar activo en el ticket o de lo contrario será cerrado por inactividad!** 🕐
+
+📂 *4)* **Abrir ticket en su categoría que corresponde o de lo contrario serás sancionado!**
+
+⚠️ *5)* **Abrir ticket sin razón es sancionable!** 🚫
 
 
-async def cargar_emoji(nombre, emoji_id):
-
-    try:
-
-        if not str(emoji_id).isdigit():
-
-            print(
-                f"[EMOJI] ⚠️ ID inválido: {emoji_id}"
-            )
-
-            EMOJIS[nombre] = f":{emoji_id}:"
-            return
-
-        emoji_id = int(emoji_id)
-
-        emoji = bot.get_emoji(emoji_id)
-
-        if emoji is None:
-
-            try:
-                emoji = await bot.fetch_emoji(emoji_id)
-
-            except discord.NotFound:
-                emoji = None
-
-            except discord.Forbidden:
-                emoji = None
-
-            except discord.HTTPException:
-                emoji = None
-
-        if emoji:
-
-            EMOJIS[nombre] = str(emoji)
-
-            print(
-                f"[EMOJI] ✅ {nombre}: {emoji}"
-            )
-
-        else:
-
-            EMOJIS[nombre] = f":{emoji_id}:"
-
-            print(
-                f"[EMOJI] ⚠️ No encontrado: {emoji_id}"
-            )
-
-    except Exception as e:
-
-        print(
-            f"[EMOJI] ❌ Error: {e}"
-        )
-
-        EMOJIS[nombre] = f":{emoji_id}:"
-
-
-async def cargar_todos_los_emojis():
-
-    print("🔎 Cargando emojis...")
-
-    for nombre, emoji_id in EMOJI_IDS.items():
-
-        await cargar_emoji(
-            nombre,
-            emoji_id
-        )
-
-    print("✅ Emojis cargados.")
-
-
-def emoji(nombre):
-
-    return EMOJIS.get(
-        nombre,
-        ""
-    )
-
-
-# =========================================================
-# REGLAS
-# =========================================================
-
-def obtener_mensaje_reglas():
-
-    return (
-        f"{emoji('ayuda')} **¿Necesitas Ayuda? Abre un ticket en la categoría "
-        f"que necesitas! Ten paciencia a la hora de abrir ticket o de lo "
-        f"contrario serás sancionado!** {emoji('atencion')}\n\n"
-
-        f"{emoji('reglas')} **Reglas** {emoji('reglas')}\n\n"
-
-        f"{emoji('regla1')} *1)* **Ten paciencia a la hora de abrir ticket!** "
-        f"{emoji('paciencia')}\n\n"
-
-        f"{emoji('regla2')} *2)* **No insultar al equipo del staff!** "
-        f"{emoji('atencion')}\n\n"
-
-        f"{emoji('regla3')} *3)* **Estar activo en el ticket o de lo "
-        f"contrario será cerrado por inactividad!** {emoji('paciencia')}\n\n"
-
-        f"{emoji('regla4')} *4)* **Abrir ticket en su categoría que "
-        f"corresponde o de lo contrario serás sancionado!**\n\n"
-
-        f"{emoji('regla5')} *5)* **Abrir ticket sin razón es sancionable!** "
-        f"{emoji('atencion')}\n\n\n"
-
-        f"{emoji('rapido')} **Te atenderemos lo mas rápido posible!** "
-        f"{emoji('rapido2')}"
-    )
+🚀 **Te atenderemos lo mas rápido posible!** ⚡"""
 
 
 # =========================================================
@@ -185,16 +76,16 @@ TIPOS_TICKET = {
 
 
 # =========================================================
-# BUSCAR TICKET
+# BUSCAR TICKET EXISTENTE
 # =========================================================
 
-async def buscar_ticket(guild, usuario):
+def buscar_ticket(guild, usuario):
 
-    nombre = f"ticket-{usuario.id}"
+    nombre_ticket = f"ticket-{usuario.id}"
 
     for canal in guild.text_channels:
 
-        if canal.name == nombre:
+        if canal.name == nombre_ticket:
             return canal
 
     return None
@@ -221,34 +112,21 @@ async def crear_ticket(
 
         return
 
-    # =====================================================
-    # BUSCAR LOS DOS ROLES DE SOPORTE
-    # =====================================================
-
-    rol_soporte_1 = guild.get_role(
-        ROL_SOPORTE_1
+    # Buscar rol de soporte
+    rol_soporte = guild.get_role(
+        ROL_SOPORTE
     )
 
-    rol_soporte_2 = guild.get_role(
-        ROL_SOPORTE_2
-    )
-
-    # Mostrar en consola qué encuentra
-    print(
-        f"[ROLES] Soporte 1: {rol_soporte_1}"
-    )
-
-    print(
-        f"[ROLES] Soporte 2: {rol_soporte_2}"
-    )
-
-    # Si falta cualquiera de los dos
-    if rol_soporte_1 is None or rol_soporte_2 is None:
+    if rol_soporte is None:
 
         await interaction.followup.send(
-            "❌ No encuentro uno de los dos roles de soporte. "
-            "Comprueba que el bot esté en el servidor y que los IDs sean correctos.",
+            "❌ No encuentro el rol de soporte en este servidor.",
             ephemeral=True
+        )
+
+        print(
+            f"❌ No se encontró el rol {ROL_SOPORTE} "
+            f"en {guild.name} ({guild.id})"
         )
 
         return
@@ -257,7 +135,7 @@ async def crear_ticket(
     # COMPROBAR TICKET EXISTENTE
     # =====================================================
 
-    ticket_existente = await buscar_ticket(
+    ticket_existente = buscar_ticket(
         guild,
         usuario
     )
@@ -283,7 +161,7 @@ async def crear_ticket(
         embed_links=True
     )
 
-    permisos_soporte = discord.PermissionOverwrite(
+    permisos_staff = discord.PermissionOverwrite(
         view_channel=True,
         send_messages=True,
         read_message_history=True,
@@ -310,11 +188,8 @@ async def crear_ticket(
         usuario:
             permisos_usuario,
 
-        rol_soporte_1:
-            permisos_soporte,
-
-        rol_soporte_2:
-            permisos_soporte,
+        rol_soporte:
+            permisos_staff,
 
         guild.me:
             permisos_bot
@@ -344,7 +219,7 @@ async def crear_ticket(
     except Exception as e:
 
         print(
-            f"[TICKET] ❌ Error creando canal: {e}"
+            f"❌ Error creando ticket: {e}"
         )
 
         await interaction.followup.send(
@@ -355,7 +230,7 @@ async def crear_ticket(
         return
 
     # =====================================================
-    # EMBED
+    # EMBED DEL TICKET
     # =====================================================
 
     nombre_tipo = TIPOS_TICKET.get(
@@ -369,6 +244,7 @@ async def crear_ticket(
             f"👋 Bienvenido/a {usuario.mention}.\n\n"
             "Un miembro del equipo de soporte te atenderá "
             "lo antes posible.\n\n"
+            "📌 Explica claramente tu problema o solicitud.\n\n"
             "🔒 Cuando hayas terminado, utiliza el botón "
             "**Cerrar ticket**."
         ),
@@ -382,17 +258,9 @@ async def crear_ticket(
     # =====================================================
     # MENCIÓN
     # =====================================================
-    #
-    # SOLO SE MENCIONA:
-    # - Usuario
-    # - ROL_SOPORTE_1
-    #
-    # ROL_SOPORTE_2 TIENE ACCESO PERO NO SE MENCIONA.
-    #
 
     contenido = (
-        f"{usuario.mention} "
-        f"<@&{ROL_SOPORTE_1}>"
+        f"{usuario.mention} <@&{ROL_SOPORTE}>"
     )
 
     # =====================================================
@@ -441,13 +309,13 @@ async def crear_ticket(
         )
 
         print(
-            f"[TICKET] ✅ Creado: {canal.name}"
+            f"✅ Ticket creado: {canal.name}"
         )
 
     except Exception as e:
 
         print(
-            f"[TICKET] ❌ Error enviando mensaje: {e}"
+            f"❌ Error enviando mensaje del ticket: {e}"
         )
 
         await interaction.followup.send(
@@ -457,12 +325,10 @@ async def crear_ticket(
 
 
 # =========================================================
-# CERRAR TICKET
+# BOTÓN CERRAR TICKET
 # =========================================================
 
-class CerrarTicketView(
-    discord.ui.View
-):
+class CerrarTicketView(discord.ui.View):
 
     def __init__(self):
 
@@ -502,17 +368,15 @@ class CerrarTicketView(
         except Exception as e:
 
             print(
-                f"[TICKET] ❌ Error cerrando: {e}"
+                f"❌ Error cerrando ticket: {e}"
             )
 
 
 # =========================================================
-# PANEL
+# PANEL DE TICKETS
 # =========================================================
 
-class TicketView(
-    discord.ui.View
-):
+class TicketView(discord.ui.View):
 
     def __init__(self):
 
@@ -645,10 +509,7 @@ async def on_ready():
 
     try:
 
-        # Cargar emojis
-        await cargar_todos_los_emojis()
-
-        # Registrar botones
+        # Registrar botones persistentes
         if not getattr(
             bot,
             "_views_registered",
@@ -669,35 +530,33 @@ async def on_ready():
                 "✅ Botones registrados."
             )
 
-        # Sincronizar slash commands
+        # Sincronizar comandos
         synced = await bot.tree.sync()
 
         print(
             f"✅ {len(synced)} comandos sincronizados."
         )
 
-        # Comprobar roles en todos los servidores
+        # Comprobar rol
         for guild in bot.guilds:
 
-            print(
-                f"🏠 Servidor: {guild.name}"
+            rol = guild.get_role(
+                ROL_SOPORTE
             )
 
-            rol1 = guild.get_role(
-                ROL_SOPORTE_1
-            )
+            if rol:
 
-            rol2 = guild.get_role(
-                ROL_SOPORTE_2
-            )
+                print(
+                    f"✅ Rol de soporte encontrado: "
+                    f"{rol.name} ({ROL_SOPORTE})"
+                )
 
-            print(
-                f"   Soporte 1: {rol1}"
-            )
+            else:
 
-            print(
-                f"   Soporte 2: {rol2}"
-            )
+                print(
+                    f"⚠️ Rol {ROL_SOPORTE} "
+                    f"no encontrado en {guild.name}"
+                )
 
     except Exception as e:
 
@@ -736,36 +595,36 @@ async def ticketpanel(
         if canal is None:
 
             print(
-                f"❌ No encuentro el canal: {canal_id}"
+                f"❌ No encuentro el canal {canal_id}"
             )
 
             continue
 
         try:
 
-            # ---------------------------------------------
+            # =================================================
             # 1. REGLAS
-            # ---------------------------------------------
+            # =================================================
 
             await canal.send(
-                content=obtener_mensaje_reglas(),
+                content=MENSAJE_REGLAS,
                 allowed_mentions=discord.AllowedMentions.none()
             )
 
-            # ---------------------------------------------
-            # 2. MENCIÓN DEL SOPORTE PRINCIPAL
-            # ---------------------------------------------
+            # =================================================
+            # 2. MENCIONAR SOPORTE
+            # =================================================
 
             await canal.send(
-                content=f"<@&{ROL_SOPORTE_1}>",
+                content=f"<@&{ROL_SOPORTE}>",
                 allowed_mentions=discord.AllowedMentions(
                     roles=True
                 )
             )
 
-            # ---------------------------------------------
+            # =================================================
             # 3. PANEL
-            # ---------------------------------------------
+            # =================================================
 
             embed = discord.Embed(
                 color=COLOR
@@ -818,13 +677,14 @@ async def ticketpanel(
             )
 
     await interaction.followup.send(
-        f"✅ Panel enviado a {enviados}/{len(CANALES_PANEL)} canales.",
+        f"✅ Panel enviado a "
+        f"{enviados}/{len(CANALES_PANEL)} canales.",
         ephemeral=True
     )
 
 
 # =========================================================
-# ERROR DEL COMANDO
+# ERROR /TICKETPANEL
 # =========================================================
 
 @ticketpanel.error
@@ -875,7 +735,7 @@ async def ticketpanel_error(
 
 
 # =========================================================
-# TOKEN
+# COMPROBAR TOKEN
 # =========================================================
 
 if not TOKEN:
@@ -889,6 +749,6 @@ if not TOKEN:
 # INICIAR
 # =========================================================
 
-print("🚀 Iniciando bot...")
+print("🚀 Iniciando bot de tickets...")
 
 bot.run(TOKEN)
