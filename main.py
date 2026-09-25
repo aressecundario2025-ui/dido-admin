@@ -17,8 +17,7 @@ CANALES_PANEL = [
 
 ROL_SOPORTE = 1434289818992382084
 
-# Enlace directo al logo de Eclipse World
-IMAGEN_LOGO = "https://discordapp.com/channels/1544430992364802178/1551198802164064266/1553057298157543615"
+LOGO_PATH = "logo.png"
 
 # =========================================================
 # INTENTS
@@ -34,15 +33,7 @@ bot = commands.Bot(
     intents=intents
 )
 
-# =========================================================
-# COLOR
-# =========================================================
-
 COLOR = discord.Color.from_rgb(88, 101, 242)
-
-# =========================================================
-# TIPOS DE TICKET
-# =========================================================
 
 TIPOS_TICKET = {
     "soporte": "🎫 Soporte general",
@@ -54,15 +45,18 @@ TIPOS_TICKET = {
 
 
 # =========================================================
-# BUSCAR TICKET DEL USUARIO
+# BUSCAR TICKET EXISTENTE
 # =========================================================
 
-async def buscar_ticket(guild: discord.Guild, usuario: discord.Member):
+async def buscar_ticket(
+    guild: discord.Guild,
+    usuario: discord.Member
+):
 
-    nombre_ticket = f"ticket-{usuario.id}"
+    nombre = f"ticket-{usuario.id}"
 
     for canal in guild.text_channels:
-        if canal.name == nombre_ticket:
+        if canal.name == nombre:
             return canal
 
     return None
@@ -86,10 +80,12 @@ async def crear_ticket(
     rol_staff = guild.get_role(ROL_SOPORTE)
 
     if rol_staff is None:
+
         await interaction.response.send_message(
             "❌ No se encuentra el rol de soporte.",
             ephemeral=True
         )
+
         return
 
     ticket_existente = await buscar_ticket(
@@ -100,7 +96,8 @@ async def crear_ticket(
     if ticket_existente:
 
         await interaction.response.send_message(
-            f"❌ Ya tienes un ticket abierto: {ticket_existente.mention}",
+            f"❌ Ya tienes un ticket abierto: "
+            f"{ticket_existente.mention}",
             ephemeral=True
         )
 
@@ -111,7 +108,7 @@ async def crear_ticket(
     )
 
     # =====================================================
-    # PERMISOS
+    # PERMISOS DEL TICKET
     # =====================================================
 
     overwrites = {
@@ -146,7 +143,7 @@ async def crear_ticket(
     }
 
     # =====================================================
-    # CREAR CANAL
+    # CREAR CANAL PRIVADO
     # =====================================================
 
     canal = await guild.create_text_channel(
@@ -166,7 +163,9 @@ async def crear_ticket(
         ),
         description=(
             f"Hola {usuario.mention} 👋\n\n"
+
             "Tu ticket ha sido creado correctamente.\n\n"
+
             "Un miembro del equipo de soporte "
             "te atenderá lo antes posible.\n\n"
 
@@ -182,31 +181,53 @@ async def crear_ticket(
         color=COLOR
     )
 
-    if IMAGEN_LOGO.startswith("http"):
-        embed.set_thumbnail(
-            url=IMAGEN_LOGO
-        )
-
     embed.set_footer(
         text="Eclipse World • Sistema de soporte"
     )
 
     # =====================================================
-    # MENCIÓN DEL USUARIO + STAFF
+    # LOGO DEL TICKET
     # =====================================================
 
-    await canal.send(
-        content=(
-            f"{usuario.mention} "
-            f"<@&{ROL_SOPORTE}>"
-        ),
-        embed=embed,
-        view=CerrarTicketView(),
-        allowed_mentions=discord.AllowedMentions(
-            users=True,
-            roles=True
+    if os.path.exists(LOGO_PATH):
+
+        file = discord.File(
+            LOGO_PATH,
+            filename="logo.png"
         )
-    )
+
+        embed.set_thumbnail(
+            url="attachment://logo.png"
+        )
+
+        await canal.send(
+            content=(
+                f"{usuario.mention} "
+                f"<@&{ROL_SOPORTE}>"
+            ),
+            embed=embed,
+            file=file,
+            view=CerrarTicketView(),
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=True
+            )
+        )
+
+    else:
+
+        await canal.send(
+            content=(
+                f"{usuario.mention} "
+                f"<@&{ROL_SOPORTE}>"
+            ),
+            embed=embed,
+            view=CerrarTicketView(),
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=True
+            )
+        )
 
     # =====================================================
     # CONFIRMACIÓN
@@ -225,7 +246,10 @@ async def crear_ticket(
 class CerrarTicketView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @discord.ui.button(
         label="Cerrar ticket",
@@ -251,6 +275,7 @@ class CerrarTicketView(discord.ui.View):
         await asyncio.sleep(5)
 
         try:
+
             await canal.delete(
                 reason=(
                     f"Ticket cerrado por "
@@ -272,11 +297,14 @@ class CerrarTicketView(discord.ui.View):
 class TicketView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
 
-    # -----------------------------------------------------
-    # SOPORTE
-    # -----------------------------------------------------
+        super().__init__(
+            timeout=None
+        )
+
+    # =====================================================
+    # SOPORTE GENERAL
+    # =====================================================
 
     @discord.ui.button(
         label="Soporte general",
@@ -295,9 +323,9 @@ class TicketView(discord.ui.View):
             "soporte"
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # REPORTAR USUARIO
-    # -----------------------------------------------------
+    # =====================================================
 
     @discord.ui.button(
         label="Reportar usuario",
@@ -316,9 +344,9 @@ class TicketView(discord.ui.View):
             "reportar"
         )
 
-    # -----------------------------------------------------
-    # BUG
-    # -----------------------------------------------------
+    # =====================================================
+    # REPORTAR BUG
+    # =====================================================
 
     @discord.ui.button(
         label="Reportar bug",
@@ -337,9 +365,9 @@ class TicketView(discord.ui.View):
             "bug"
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # POSTULACIONES
-    # -----------------------------------------------------
+    # =====================================================
 
     @discord.ui.button(
         label="Postulaciones",
@@ -358,9 +386,9 @@ class TicketView(discord.ui.View):
             "postulacion"
         )
 
-    # -----------------------------------------------------
+    # =====================================================
     # ESTAFAS
-    # -----------------------------------------------------
+    # =====================================================
 
     @discord.ui.button(
         label="Estafas",
@@ -381,7 +409,7 @@ class TicketView(discord.ui.View):
 
 
 # =========================================================
-# READY
+# BOT READY
 # =========================================================
 
 @bot.event
@@ -393,6 +421,10 @@ async def on_ready():
     print("========================================")
 
     try:
+
+        # Registrar botones persistentes
+        bot.add_view(TicketView())
+        bot.add_view(CerrarTicketView())
 
         synced = await bot.tree.sync()
 
@@ -408,7 +440,7 @@ async def on_ready():
 
 
 # =========================================================
-# TICKETPANEL
+# /TICKETPANEL
 # =========================================================
 
 @bot.tree.command(
@@ -427,7 +459,7 @@ async def ticketpanel(
     )
 
     # =====================================================
-    # EMBED DEL PANEL
+    # EMBED PRINCIPAL
     # =====================================================
 
     embed = discord.Embed(
@@ -454,19 +486,16 @@ async def ticketpanel(
             "━━━━━━━━━━━━━━━━━━━━\n\n"
 
             "⚠️ **IMPORTANTE**\n\n"
+
             "No hagas spam ni abras tickets duplicados.\n"
             "Explica claramente tu problema y aporta "
             "pruebas cuando sea necesario.\n\n"
+
             "El mal uso del sistema de tickets puede "
             "conllevar sanciones."
         ),
         color=COLOR
     )
-
-    if IMAGEN_LOGO.startswith("http"):
-        embed.set_image(
-            url=IMAGEN_LOGO
-        )
 
     embed.set_footer(
         text="Eclipse World • Sistema de soporte"
@@ -475,27 +504,60 @@ async def ticketpanel(
     enviados = 0
 
     # =====================================================
-    # ENVIAR A LOS DOS CANALES
+    # ENVIAR PANEL A LOS DOS CANALES
     # =====================================================
 
     for canal_id in CANALES_PANEL:
 
-        canal = bot.get_channel(canal_id)
+        canal = bot.get_channel(
+            canal_id
+        )
 
         if canal is None:
 
             print(
-                f"⚠️ No se encontró el canal {canal_id}"
+                f"⚠️ No se encontró el canal "
+                f"{canal_id}"
             )
 
             continue
 
         try:
 
-            await canal.send(
-                embed=embed,
-                view=TicketView()
-            )
+            # Cada canal necesita su propio archivo
+            if os.path.exists(LOGO_PATH):
+
+                file = discord.File(
+                    LOGO_PATH,
+                    filename="logo.png"
+                )
+
+                embed_panel = discord.Embed(
+                    title="🎫 Soporte • Eclipse World",
+                    description=embed.description,
+                    color=COLOR
+                )
+
+                embed_panel.set_image(
+                    url="attachment://logo.png"
+                )
+
+                embed_panel.set_footer(
+                    text="Eclipse World • Sistema de soporte"
+                )
+
+                await canal.send(
+                    embed=embed_panel,
+                    file=file,
+                    view=TicketView()
+                )
+
+            else:
+
+                await canal.send(
+                    embed=embed,
+                    view=TicketView()
+                )
 
             enviados += 1
 
@@ -512,7 +574,8 @@ async def ticketpanel(
         except discord.HTTPException as e:
 
             print(
-                f"❌ Error en {canal_id}: {e}"
+                f"❌ Error enviando panel "
+                f"a {canal_id}: {e}"
             )
 
     await interaction.followup.send(
@@ -522,7 +585,7 @@ async def ticketpanel(
 
 
 # =========================================================
-# ERROR TICKETPANEL
+# ERRORES DE /TICKETPANEL
 # =========================================================
 
 @ticketpanel.error
@@ -538,7 +601,7 @@ async def ticketpanel_error(
 
         mensaje = (
             "❌ Necesitas permisos de Administrador "
-            "para usar este comando."
+            "para utilizar este comando."
         )
 
     else:
@@ -570,7 +633,8 @@ async def ticketpanel_error(
 if not TOKEN:
 
     raise RuntimeError(
-        "❌ Falta la variable DISCORD_TOKEN en Railway."
+        "❌ No existe la variable DISCORD_TOKEN "
+        "en Railway."
     )
 
 
