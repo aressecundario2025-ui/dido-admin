@@ -15,8 +15,13 @@ CANALES_PANEL = [
     1551198802164064266
 ]
 
+# STAFF QUE SE MENCIONA
 ROL_SOPORTE = 1434289818992382084
 
+# ROL QUE TIENE ACCESO PERO NO SE MENCIONA
+ROL_ACCESO_EXTRA = 1552374542909833246
+
+# LOGO
 LOGO_PATH = "logo.png"
 
 # =========================================================
@@ -33,7 +38,15 @@ bot = commands.Bot(
     intents=intents
 )
 
+# =========================================================
+# COLOR
+# =========================================================
+
 COLOR = discord.Color.from_rgb(88, 101, 242)
+
+# =========================================================
+# TIPOS DE TICKET
+# =========================================================
 
 TIPOS_TICKET = {
     "soporte": "🎫 Soporte general",
@@ -45,6 +58,30 @@ TIPOS_TICKET = {
 
 
 # =========================================================
+# MENSAJE DE REGLAS
+# =========================================================
+
+MENSAJE_REGLAS = """
+:54967105671957: **¿Necesitas Ayuda? Abre un ticket en la categoría que necesitas! Ten paciencia a la hora de abrir ticket o de lo contrario serás sancionado!** :1219816049822666893:
+
+:3057195671616: **Reglas** :3057195671616:
+
+:0974966496677: *1)* **Ten paciencia a la hora de abrir ticket!** :1195801251850502175:
+
+:30571957289: *2)* **No insultar al equipo del staff!** :1219816049822666893:
+
+:205719567E93093984: *3)* **Estar activo en el ticket o de lo contrario será cerrado por inactividad!** :1195801251850502175:
+
+:4947569375939420: *4)* **Abrir ticket en su categoría que corresponde o de lo contrario serás sancionado!**
+
+:30572935723: *5)* **Abrir ticket sin razón es sancionable!** :1219816049822666893:
+
+
+:1216991711872684052: **Te atenderemos lo mas rápido posible!** :1216999826248437784:
+"""
+
+
+# =========================================================
 # BUSCAR TICKET EXISTENTE
 # =========================================================
 
@@ -53,10 +90,11 @@ async def buscar_ticket(
     usuario: discord.Member
 ):
 
-    nombre = f"ticket-{usuario.id}"
+    nombre_ticket = f"ticket-{usuario.id}"
 
     for canal in guild.text_channels:
-        if canal.name == nombre:
+
+        if canal.name == nombre_ticket:
             return canal
 
     return None
@@ -78,6 +116,11 @@ async def crear_ticket(
         return
 
     rol_staff = guild.get_role(ROL_SOPORTE)
+    rol_extra = guild.get_role(ROL_ACCESO_EXTRA)
+
+    # =====================================================
+    # COMPROBAR STAFF
+    # =====================================================
 
     if rol_staff is None:
 
@@ -87,6 +130,10 @@ async def crear_ticket(
         )
 
         return
+
+    # =====================================================
+    # COMPROBAR TICKET EXISTENTE
+    # =====================================================
 
     ticket_existente = await buscar_ticket(
         guild,
@@ -108,15 +155,17 @@ async def crear_ticket(
     )
 
     # =====================================================
-    # PERMISOS DEL TICKET
+    # PERMISOS
     # =====================================================
 
     overwrites = {
 
+        # Nadie más puede ver el ticket
         guild.default_role: discord.PermissionOverwrite(
             view_channel=False
         ),
 
+        # Usuario que abrió el ticket
         usuario: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -125,14 +174,7 @@ async def crear_ticket(
             embed_links=True
         ),
 
-        rol_staff: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            attach_files=True,
-            embed_links=True
-        ),
-
+        # Bot
         guild.me: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
@@ -143,14 +185,61 @@ async def crear_ticket(
     }
 
     # =====================================================
-    # CREAR CANAL PRIVADO
+    # STAFF
     # =====================================================
 
-    canal = await guild.create_text_channel(
-        name=f"ticket-{usuario.id}",
-        overwrites=overwrites,
-        reason=f"Ticket creado por {usuario}"
+    overwrites[rol_staff] = discord.PermissionOverwrite(
+        view_channel=True,
+        send_messages=True,
+        read_message_history=True,
+        attach_files=True,
+        embed_links=True
     )
+
+    # =====================================================
+    # SEGUNDO ROL
+    # ACCESO SIN MENCIÓN
+    # =====================================================
+
+    if rol_extra:
+
+        overwrites[rol_extra] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            embed_links=True
+        )
+
+    # =====================================================
+    # CREAR CANAL
+    # =====================================================
+
+    try:
+
+        canal = await guild.create_text_channel(
+            name=f"ticket-{usuario.id}",
+            overwrites=overwrites,
+            reason=f"Ticket creado por {usuario}"
+        )
+
+    except discord.Forbidden:
+
+        await interaction.followup.send(
+            "❌ No tengo permisos para crear canales.",
+            ephemeral=True
+        )
+
+        return
+
+    except discord.HTTPException as e:
+
+        await interaction.followup.send(
+            f"❌ No pude crear el ticket: `{e}`",
+            ephemeral=True
+        )
+
+        return
 
     # =====================================================
     # EMBED DEL TICKET
@@ -186,7 +275,8 @@ async def crear_ticket(
     )
 
     # =====================================================
-    # LOGO DEL TICKET
+    # MENSAJE DEL TICKET
+    # SOLO MENCIONA USUARIO + STAFF
     # =====================================================
 
     if os.path.exists(LOGO_PATH):
@@ -409,7 +499,7 @@ class TicketView(discord.ui.View):
 
 
 # =========================================================
-# BOT READY
+# READY
 # =========================================================
 
 @bot.event
@@ -422,20 +512,34 @@ async def on_ready():
 
     try:
 
-        # Registrar botones persistentes
-        bot.add_view(TicketView())
-        bot.add_view(CerrarTicketView())
+        if not getattr(
+            bot,
+            "_views_registered",
+            False
+        ):
+
+            bot.add_view(
+                TicketView()
+            )
+
+            bot.add_view(
+                CerrarTicketView()
+            )
+
+            bot._views_registered = True
 
         synced = await bot.tree.sync()
 
         print(
-            f"✅ Comandos sincronizados: {len(synced)}"
+            f"✅ Comandos sincronizados: "
+            f"{len(synced)}"
         )
 
     except Exception as e:
 
         print(
-            f"❌ Error sincronizando comandos: {e}"
+            f"❌ Error sincronizando comandos: "
+            f"{e}"
         )
 
 
@@ -458,53 +562,10 @@ async def ticketpanel(
         ephemeral=True
     )
 
-    # =====================================================
-    # EMBED PRINCIPAL
-    # =====================================================
-
-    embed = discord.Embed(
-        title="🎫 Soporte • Eclipse World",
-        description=(
-            "¿Necesitas ayuda? Selecciona una de "
-            "las opciones para abrir un ticket.\n\n"
-
-            "🎫 **Soporte general**\n"
-            "Dudas, problemas o ayuda general.\n\n"
-
-            "🚨 **Reportar usuario**\n"
-            "Reporta usuarios que incumplan las normas.\n\n"
-
-            "🐛 **Reportar bug**\n"
-            "Informa de errores o problemas del servidor.\n\n"
-
-            "👥 **Postulaciones**\n"
-            "Solicita entrar al equipo de Eclipse World.\n\n"
-
-            "💰 **Estafas**\n"
-            "Informa sobre posibles estafas o engaños.\n\n"
-
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-
-            "⚠️ **IMPORTANTE**\n\n"
-
-            "No hagas spam ni abras tickets duplicados.\n"
-            "Explica claramente tu problema y aporta "
-            "pruebas cuando sea necesario.\n\n"
-
-            "El mal uso del sistema de tickets puede "
-            "conllevar sanciones."
-        ),
-        color=COLOR
-    )
-
-    embed.set_footer(
-        text="Eclipse World • Sistema de soporte"
-    )
-
     enviados = 0
 
     # =====================================================
-    # ENVIAR PANEL A LOS DOS CANALES
+    # ENVIAR PRIMERO LAS REGLAS
     # =====================================================
 
     for canal_id in CANALES_PANEL:
@@ -524,7 +585,39 @@ async def ticketpanel(
 
         try:
 
-            # Cada canal necesita su propio archivo
+            # -------------------------------------------------
+            # 1. MENSAJE DE REGLAS
+            # -------------------------------------------------
+
+            await canal.send(
+                content=MENSAJE_REGLAS,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+
+            # -------------------------------------------------
+            # 2. MENCIÓN SOLO AL STAFF
+            # -------------------------------------------------
+
+            await canal.send(
+                content=f"<@&{ROL_SOPORTE}>",
+                allowed_mentions=discord.AllowedMentions(
+                    roles=True
+                )
+            )
+
+            # -------------------------------------------------
+            # 3. PANEL
+            # -------------------------------------------------
+
+            embed = discord.Embed(
+                title="",
+                description="",
+                color=COLOR
+            )
+
+            # El panel solo lleva el logo
+            # y los botones de abajo.
+
             if os.path.exists(LOGO_PATH):
 
                 file = discord.File(
@@ -532,37 +625,31 @@ async def ticketpanel(
                     filename="logo.png"
                 )
 
-                embed_panel = discord.Embed(
-                    title="🎫 Soporte • Eclipse World",
-                    description=embed.description,
-                    color=COLOR
-                )
-
-                embed_panel.set_image(
+                embed.set_image(
                     url="attachment://logo.png"
                 )
 
-                embed_panel.set_footer(
-                    text="Eclipse World • Sistema de soporte"
-                )
-
                 await canal.send(
-                    embed=embed_panel,
+                    embed=embed,
                     file=file,
                     view=TicketView()
                 )
 
             else:
 
+                print(
+                    "⚠️ No se encontró logo.png"
+                )
+
                 await canal.send(
-                    embed=embed,
                     view=TicketView()
                 )
 
             enviados += 1
 
             print(
-                f"✅ Panel enviado a {canal_id}"
+                f"✅ Panel completo enviado a "
+                f"{canal_id}"
             )
 
         except discord.Forbidden:
@@ -574,9 +661,13 @@ async def ticketpanel(
         except discord.HTTPException as e:
 
             print(
-                f"❌ Error enviando panel "
-                f"a {canal_id}: {e}"
+                f"❌ Error enviando a "
+                f"{canal_id}: {e}"
             )
+
+    # =====================================================
+    # RESPUESTA
+    # =====================================================
 
     await interaction.followup.send(
         f"✅ Panel enviado a {enviados}/2 canales.",
@@ -585,7 +676,7 @@ async def ticketpanel(
 
 
 # =========================================================
-# ERRORES DE /TICKETPANEL
+# ERROR DEL COMANDO
 # =========================================================
 
 @ticketpanel.error
