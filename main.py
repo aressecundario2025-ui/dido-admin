@@ -1,19 +1,45 @@
 import os
+import asyncio
 import discord
 from discord.ext import commands
+from discord import app_commands
 
 TOKEN = os.getenv("TOKEN_DISCORD")
 
-# Canales donde se puede utilizar el sistema de tickets
-CANALES_TICKETS = {
-    1549058205051527198,
+# ==========================================
+# CONFIGURACIÓN
+# ==========================================
+
+# Canales donde aparecerá el panel
+CANALES_PANEL = [
+    1434297124539076738,
     1551198802164064266
-}
+]
+
+# Rol que recibirá/atenderá los tickets
+ROL_SOPORTE = 1434289818992382084
+
+# Categoría donde se crearán los tickets
+# Si no quieres categoría, déjalo en 0
+CATEGORIA_TICKETS = 0
+
+# ==========================================
+# LOGO DE ECLIPSE WORLD
+# ==========================================
+# Pega aquí el enlace directo a la imagen del logo.
+# Ejemplo:
+# https://cdn.discordapp.com/attachments/....../logo.png
+
+IMAGEN_LOGO = "PEGA_AQUI_EL_ENLACE_DEL_LOGO"
+
+
+# ==========================================
+# BOT
+# ==========================================
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = True
 
 bot = commands.Bot(
     command_prefix="!",
@@ -21,195 +47,62 @@ bot = commands.Bot(
 )
 
 
-# =========================================================
-# MODALES
-# =========================================================
+# ==========================================
+# INICIO
+# ==========================================
 
-class PostulacionModal(discord.ui.Modal, title="📝 Postulación"):
+@bot.event
+async def on_ready():
 
-    minecraft = discord.ui.TextInput(
-        label="Nombre de Minecraft",
-        placeholder="Tu nick de Minecraft",
-        max_length=100
-    )
+    try:
+        synced = await bot.tree.sync()
 
-    puesto = discord.ui.TextInput(
-        label="¿A qué puesto aspiras?",
-        placeholder="Builder, Staff, Helper, etc.",
-        max_length=100
-    )
+        bot.add_view(TicketView())
 
-    experiencia = discord.ui.TextInput(
-        label="Experiencia",
-        placeholder="Cuéntanos tu experiencia",
-        style=discord.TextStyle.paragraph,
-        max_length=1500
-    )
-
-    motivo = discord.ui.TextInput(
-        label="¿Por qué quieres entrar?",
-        placeholder="Explícanos tu interés",
-        style=discord.TextStyle.paragraph,
-        max_length=1500
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        await crear_ticket(
-            interaction,
-            "postulacion",
-            {
-                "Minecraft": self.minecraft.value,
-                "Puesto": self.puesto.value,
-                "Experiencia": self.experiencia.value,
-                "Motivo": self.motivo.value
-            }
+        print(
+            f"🌑 Eclipse World | Tickets conectado como {bot.user}"
         )
 
-
-class DudaModal(discord.ui.Modal, title="❓ Duda"):
-
-    asunto = discord.ui.TextInput(
-        label="Asunto",
-        placeholder="¿Sobre qué tienes una duda?",
-        max_length=150
-    )
-
-    descripcion = discord.ui.TextInput(
-        label="Describe tu duda",
-        placeholder="Explica tu duda con detalle",
-        style=discord.TextStyle.paragraph,
-        max_length=2000
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        await crear_ticket(
-            interaction,
-            "duda",
-            {
-                "Asunto": self.asunto.value,
-                "Descripción": self.descripcion.value
-            }
+        print(
+            f"✅ {len(synced)} comandos sincronizados"
         )
 
-
-class BugModal(discord.ui.Modal, title="🐛 Reportar bug"):
-
-    titulo = discord.ui.TextInput(
-        label="Título del bug",
-        placeholder="Ejemplo: Error al entrar al servidor",
-        max_length=150
-    )
-
-    descripcion = discord.ui.TextInput(
-        label="Describe el bug",
-        placeholder="Explica qué ocurre",
-        style=discord.TextStyle.paragraph,
-        max_length=2000
-    )
-
-    pasos = discord.ui.TextInput(
-        label="¿Cómo reproducirlo?",
-        placeholder="Explica los pasos para que ocurra",
-        style=discord.TextStyle.paragraph,
-        max_length=1500,
-        required=False
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        await crear_ticket(
-            interaction,
-            "bug",
-            {
-                "Título": self.titulo.value,
-                "Descripción": self.descripcion.value,
-                "Pasos": self.pasos.value
-            }
-        )
+    except Exception as e:
+        print(f"❌ Error iniciando el bot: {e}")
 
 
-class ReporteModal(discord.ui.Modal, title="🚨 Reportar usuario"):
-
-    usuario = discord.ui.TextInput(
-        label="Usuario reportado",
-        placeholder="Nick de Minecraft o usuario de Discord",
-        max_length=100
-    )
-
-    motivo = discord.ui.TextInput(
-        label="Motivo del reporte",
-        placeholder="Explica qué ocurrió",
-        style=discord.TextStyle.paragraph,
-        max_length=2000
-    )
-
-    pruebas = discord.ui.TextInput(
-        label="Pruebas / información adicional",
-        placeholder="Explica o aporta información adicional",
-        style=discord.TextStyle.paragraph,
-        max_length=2000,
-        required=False
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        await crear_ticket(
-            interaction,
-            "reporte",
-            {
-                "Usuario reportado": self.usuario.value,
-                "Motivo": self.motivo.value,
-                "Pruebas": self.pruebas.value
-            }
-        )
-
-
-# =========================================================
+# ==========================================
 # CREAR TICKET
-# =========================================================
+# ==========================================
 
-async def crear_ticket(interaction, tipo, datos):
+async def crear_ticket(
+    interaction: discord.Interaction,
+    tipo: str
+):
 
     guild = interaction.guild
     usuario = interaction.user
 
-    if guild is None:
+    rol_soporte = guild.get_role(ROL_SOPORTE)
+
+    if rol_soporte is None:
+
         await interaction.response.send_message(
-            "❌ Este sistema solo funciona dentro de un servidor.",
+            "❌ No encuentro el rol de soporte configurado.",
             ephemeral=True
         )
+
         return
 
-    # Buscar categoría
-    categoria = discord.utils.get(
-        guild.categories,
-        name="TICKETS"
-    )
+    # ======================================
+    # COMPROBAR TICKET EXISTENTE
+    # ======================================
 
-    # Crear categoría si no existe
-    if categoria is None:
+    nombre_ticket = f"ticket-{usuario.id}"
 
-        try:
-            categoria = await guild.create_category(
-                "TICKETS",
-                reason="Sistema de tickets de Pilares"
-            )
+    for canal in guild.text_channels:
 
-        except discord.Forbidden:
-
-            await interaction.response.send_message(
-                "❌ No tengo permiso para crear categorías.",
-                ephemeral=True
-            )
-
-            return
-
-    # Comprobar si ya tiene ticket
-    for canal in categoria.text_channels:
-
-        if canal.topic == f"ticket:{usuario.id}":
+        if canal.name == nombre_ticket:
 
             await interaction.response.send_message(
                 f"❌ Ya tienes un ticket abierto: {canal.mention}",
@@ -218,320 +111,512 @@ async def crear_ticket(interaction, tipo, datos):
 
             return
 
-    nombre = f"{tipo}-{usuario.name}".lower()
+    # ======================================
+    # PERMISOS
+    # ======================================
 
-    # Limpiar caracteres
-    nombre = "".join(
-        c if c.isalnum() or c == "-" else "-"
-        for c in nombre
-    )
+    overwrites = {
 
-    nombre = nombre[:80]
+        guild.default_role:
+            discord.PermissionOverwrite(
+                view_channel=False
+            ),
 
-    # Permisos
-    permisos = {
-        guild.default_role: discord.PermissionOverwrite(
-            view_channel=False
-        ),
-
-        usuario: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            attach_files=True,
-            embed_links=True
-        )
-    }
-
-    # Administradores existentes
-    for miembro in guild.members:
-
-        if miembro.guild_permissions.administrator:
-
-            permisos[miembro] = discord.PermissionOverwrite(
+        usuario:
+            discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True,
-                manage_channels=True
+                attach_files=True,
+                embed_links=True
+            ),
+
+        rol_soporte:
+            discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            ),
+
+        guild.me:
+            discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                send_messages=True,
+                manage_channels=True,
+                attach_files=True,
+                embed_links=True
             )
+    }
 
-    try:
+    # ======================================
+    # CATEGORÍA
+    # ======================================
 
-        canal = await guild.create_text_channel(
-            nombre,
-            category=categoria,
-            overwrites=permisos,
-            topic=f"ticket:{usuario.id}",
-            reason=f"Ticket {tipo} creado por {usuario}"
+    categoria = None
+
+    if CATEGORIA_TICKETS != 0:
+
+        categoria = guild.get_channel(
+            CATEGORIA_TICKETS
         )
 
-    except discord.Forbidden:
+    # ======================================
+    # CREAR CANAL
+    # ======================================
 
-        await interaction.response.send_message(
-            "❌ No tengo permisos para crear el ticket.",
-            ephemeral=True
-        )
+    canal = await guild.create_text_channel(
 
-        return
+        name=nombre_ticket,
+
+        category=(
+            categoria
+            if isinstance(
+                categoria,
+                discord.CategoryChannel
+            )
+            else None
+        ),
+
+        overwrites=overwrites,
+
+        reason=f"Ticket de {usuario} - {tipo}"
+    )
+
+    # ======================================
+    # EMBED DEL TICKET
+    # ======================================
 
     embed = discord.Embed(
-        title=f"🎫 Ticket de {tipo.upper()}",
+
+        title="🌑 Eclipse World | Ticket",
+
         description=(
-            f"Hola {usuario.mention}.\n\n"
-            "Tu ticket ha sido creado correctamente.\n"
-            "Un administrador lo atenderá lo antes posible.\n\n"
-            "Cuando esté solucionado, pulsa **🔒 Cerrar ticket**."
+            f"👋 Bienvenido {usuario.mention}\n\n"
+
+            f"Has abierto un ticket de **{tipo}**.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "📝 **Explica tu problema**\n"
+            "Cuéntanos qué necesitas y proporciona "
+            "toda la información posible.\n\n"
+
+            "📎 **Pruebas**\n"
+            "Si tienes capturas, vídeos u otras pruebas, "
+            "puedes adjuntarlas.\n\n"
+
+            "⏳ **Soporte**\n"
+            "Un miembro del equipo de Eclipse World "
+            "te atenderá lo antes posible."
         ),
-        color=discord.Color.blurple()
+
+        color=discord.Color.dark_blue()
     )
 
-    for nombre_campo, valor in datos.items():
+    if IMAGEN_LOGO.startswith("http"):
 
-        if valor:
-
-            embed.add_field(
-                name=nombre_campo,
-                value=valor[:1024],
-                inline=False
-            )
+        embed.set_thumbnail(
+            url=IMAGEN_LOGO
+        )
 
     embed.set_footer(
-        text=f"Ticket creado por {usuario}"
+        text="Eclipse World • Sistema de Tickets"
     )
 
+    # ======================================
+    # MENSAJE DEL TICKET
+    # ======================================
+
     await canal.send(
-        content=usuario.mention,
+
+        content=(
+            f"{usuario.mention} "
+            f"{rol_soporte.mention}"
+        ),
+
         embed=embed,
+
         view=CerrarTicketView()
     )
 
+    # ======================================
+    # RESPUESTA AL USUARIO
+    # ======================================
+
     await interaction.response.send_message(
-        f"✅ Ticket creado correctamente: {canal.mention}",
+
+        f"✅ Tu ticket ha sido creado: {canal.mention}",
+
         ephemeral=True
     )
 
 
-# =========================================================
-# BOTONES
-# =========================================================
+# ==========================================
+# CERRAR TICKET
+# ==========================================
 
-class PanelTicketsView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Postulación",
-        emoji="📝",
-        style=discord.ButtonStyle.primary,
-        custom_id="ticket_postulacion"
-    )
-    async def postulacion(self, interaction, button):
-
-        await interaction.response.send_modal(
-            PostulacionModal()
-        )
-
-    @discord.ui.button(
-        label="Duda",
-        emoji="❓",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ticket_duda"
-    )
-    async def duda(self, interaction, button):
-
-        await interaction.response.send_modal(
-            DudaModal()
-        )
-
-    @discord.ui.button(
-        label="Bug",
-        emoji="🐛",
-        style=discord.ButtonStyle.danger,
-        custom_id="ticket_bug"
-    )
-    async def bug(self, interaction, button):
-
-        await interaction.response.send_modal(
-            BugModal()
-        )
-
-    @discord.ui.button(
-        label="Reportar usuario",
-        emoji="🚨",
-        style=discord.ButtonStyle.danger,
-        custom_id="ticket_reporte"
-    )
-    async def reporte(self, interaction, button):
-
-        await interaction.response.send_modal(
-            ReporteModal()
-        )
-
-
-class CerrarTicketView(discord.ui.View):
+class CerrarTicketView(
+    discord.ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @discord.ui.button(
+
         label="Cerrar ticket",
+
         emoji="🔒",
+
         style=discord.ButtonStyle.danger,
-        custom_id="ticket_cerrar"
+
+        custom_id="eclipse_cerrar_ticket"
     )
-    async def cerrar(self, interaction, button):
+    async def cerrar(
 
-        canal = interaction.channel
-
-        if not isinstance(canal, discord.TextChannel):
-
-            await interaction.response.send_message(
-                "❌ Este botón no funciona aquí.",
-                ephemeral=True
-            )
-
-            return
-
-        propietario = None
-
-        if canal.topic and canal.topic.startswith("ticket:"):
-
-            try:
-                propietario = int(
-                    canal.topic.split(":")[1]
-                )
-
-            except ValueError:
-                pass
-
-        es_propietario = propietario == interaction.user.id
-
-        es_admin = (
-            isinstance(interaction.user, discord.Member)
-            and interaction.user.guild_permissions.administrator
-        )
-
-        if not es_propietario and not es_admin:
-
-            await interaction.response.send_message(
-                "❌ Solo el creador del ticket o un administrador puede cerrarlo.",
-                ephemeral=True
-            )
-
-            return
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
         await interaction.response.send_message(
-            "🔒 Cerrando ticket..."
+
+            "🔒 Este ticket se cerrará en 5 segundos."
         )
 
-        await canal.delete(
-            reason=f"Ticket cerrado por {interaction.user}"
+        await asyncio.sleep(5)
+
+        try:
+
+            await interaction.channel.delete(
+
+                reason=(
+                    f"Ticket cerrado por "
+                    f"{interaction.user}"
+                )
+            )
+
+        except discord.NotFound:
+
+            pass
+
+
+# ==========================================
+# PANEL DE TICKETS
+# ==========================================
+
+class TicketView(
+    discord.ui.View
+):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+
+        label="Soporte general",
+
+        emoji="🎫",
+
+        style=discord.ButtonStyle.primary,
+
+        custom_id="eclipse_soporte"
+    )
+    async def soporte(
+
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await crear_ticket(
+            interaction,
+            "Soporte general"
+        )
+
+    @discord.ui.button(
+
+        label="Reportar usuario",
+
+        emoji="🚨",
+
+        style=discord.ButtonStyle.danger,
+
+        custom_id="eclipse_reportar_usuario"
+    )
+    async def reporte(
+
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await crear_ticket(
+            interaction,
+            "Reportar usuario"
+        )
+
+    @discord.ui.button(
+
+        label="Reportar bug",
+
+        emoji="🐛",
+
+        style=discord.ButtonStyle.secondary,
+
+        custom_id="eclipse_bug"
+    )
+    async def bug(
+
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await crear_ticket(
+            interaction,
+            "Reportar bug"
+        )
+
+    @discord.ui.button(
+
+        label="Postulaciones",
+
+        emoji="👥",
+
+        style=discord.ButtonStyle.success,
+
+        custom_id="eclipse_postulacion"
+    )
+    async def postulacion(
+
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await crear_ticket(
+            interaction,
+            "Postulación"
+        )
+
+    @discord.ui.button(
+
+        label="Estafas",
+
+        emoji="💰",
+
+        style=discord.ButtonStyle.danger,
+
+        custom_id="eclipse_estafa"
+    )
+    async def estafa(
+
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        await crear_ticket(
+            interaction,
+            "Estafa"
         )
 
 
-# =========================================================
-# COMANDO PARA PUBLICAR PANEL
-# =========================================================
+# ==========================================
+# /TICKETPANEL
+# ==========================================
 
 @bot.tree.command(
+
     name="ticketpanel",
-    description="Publica el panel de tickets."
+
+    description=(
+        "Publica el panel de tickets "
+        "de Eclipse World."
+    )
 )
-async def ticketpanel(interaction):
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def ticketpanel(
 
-    if interaction.channel_id not in CANALES_TICKETS:
-
-        await interaction.response.send_message(
-            "❌ Este comando solo funciona en los canales configurados.",
-            ephemeral=True
-        )
-
-        return
-
-    if not isinstance(interaction.user, discord.Member):
-
-        return
-
-    if not interaction.user.guild_permissions.administrator:
-
-        await interaction.response.send_message(
-            "❌ Necesitas permisos de Administrador.",
-            ephemeral=True
-        )
-
-        return
+    interaction: discord.Interaction
+):
 
     embed = discord.Embed(
-        title="🎫 Centro de soporte de Pilares",
+
+        title="🌑 ECLIPSE WORLD",
+
         description=(
-            "¿Necesitas ayuda? Selecciona una opción:\n\n"
-            "📝 **Postulación**\n"
-            "Presenta tu candidatura para formar parte del equipo.\n\n"
-            "❓ **Duda**\n"
-            "Pregunta cualquier cosa sobre el servidor.\n\n"
-            "🐛 **Bug**\n"
-            "Reporta un error o problema.\n\n"
+            "## 🎫 Sistema de Tickets\n\n"
+
+            "Bienvenido al sistema oficial de soporte "
+            "de **Eclipse World**.\n\n"
+
+            "Abre un ticket seleccionando la categoría "
+            "que corresponda a tu caso.\n\n"
+
+            "🎫 **Soporte general**\n"
+            "Dudas, problemas o ayuda.\n\n"
+
             "🚨 **Reportar usuario**\n"
-            "Reporta a un usuario al equipo."
+            "Reporta comportamientos que incumplan "
+            "las normas.\n\n"
+
+            "🐛 **Reportar bug**\n"
+            "Comunica errores o fallos del servidor.\n\n"
+
+            "👥 **Postulaciones**\n"
+            "Solicita formar parte del equipo.\n\n"
+
+            "💰 **Estafas**\n"
+            "Reporta posibles estafas o problemas "
+            "relacionados.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "⚠️ **USO CORRECTO DE LOS TICKETS**\n\n"
+
+            "• Abre un ticket únicamente cuando sea "
+            "necesario.\n"
+
+            "• No abras tickets repetidos.\n"
+
+            "• No hagas spam al equipo de soporte.\n"
+
+            "• Explica claramente tu problema.\n"
+
+            "• Aporta pruebas cuando sean necesarias.\n"
+
+            "• El uso inapropiado de tickets puede "
+            "conllevar sanciones.\n\n"
+
+            "👇 **Selecciona una opción para comenzar.**"
         ),
-        color=discord.Color.blurple()
+
+        color=discord.Color.dark_blue()
     )
+
+    if IMAGEN_LOGO.startswith("http"):
+
+        embed.set_image(
+            url=IMAGEN_LOGO
+        )
 
     embed.set_footer(
-        text="Pilares • Sistema de tickets"
+
+        text=(
+            "Eclipse World • "
+            "Sistema oficial de soporte"
+        )
     )
 
-    await interaction.channel.send(
-        embed=embed,
-        view=PanelTicketsView()
-    )
+    enviados = 0
+
+    for canal_id in CANALES_PANEL:
+
+        canal = bot.get_channel(
+            canal_id
+        )
+
+        if canal is None:
+
+            print(
+                f"⚠️ No se encontró "
+                f"el canal {canal_id}"
+            )
+
+            continue
+
+        try:
+
+            await canal.send(
+
+                embed=embed,
+
+                view=TicketView()
+            )
+
+            enviados += 1
+
+        except discord.Forbidden:
+
+            print(
+                f"❌ Sin permisos en "
+                f"el canal {canal_id}"
+            )
 
     await interaction.response.send_message(
-        "✅ Panel publicado correctamente.",
+
+        f"✅ Panel enviado en "
+        f"{enviados}/{len(CANALES_PANEL)} canales.",
+
         ephemeral=True
     )
 
 
-# =========================================================
-# BOT CONECTADO
-# =========================================================
+# ==========================================
+# ERRORES
+# ==========================================
 
-@bot.event
-async def on_ready():
+@ticketpanel.error
+async def ticketpanel_error(
 
-    print("--------------------------------")
-    print(f"🎫 Bot de tickets: {bot.user}")
-    print(f"🆔 ID: {bot.user.id}")
-    print("--------------------------------")
+    interaction: discord.Interaction,
 
-    bot.add_view(PanelTicketsView())
-    bot.add_view(CerrarTicketView())
+    error
+):
 
-    try:
+    if isinstance(
 
-        comandos = await bot.tree.sync()
+        error,
 
-        print(
-            f"✅ {len(comandos)} comandos sincronizados."
+        app_commands.errors.MissingPermissions
+
+    ):
+
+        await interaction.response.send_message(
+
+            "❌ Necesitas permisos de administrador.",
+
+            ephemeral=True
         )
 
-    except Exception as error:
+    else:
 
         print(
-            f"❌ Error sincronizando comandos: {error}"
+            f"❌ Error en /ticketpanel: {error}"
         )
 
+        if not interaction.response.is_done():
 
-# =========================================================
-# INICIAR
-# =========================================================
+            await interaction.response.send_message(
+
+                "❌ Ha ocurrido un error.",
+
+                ephemeral=True
+            )
+
+
+# ==========================================
+# ARRANQUE
+# ==========================================
 
 if not TOKEN:
 
     raise RuntimeError(
-        "❌ Falta TOKEN_DISCORD en las variables de Railway."
+        "❌ Falta TOKEN_DISCORD en Railway."
     )
 
 bot.run(TOKEN)
-
