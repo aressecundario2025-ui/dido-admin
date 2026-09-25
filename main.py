@@ -31,7 +31,6 @@ intents.guilds = True
 intents.members = True
 intents.messages = True
 
-
 bot = commands.Bot(
     command_prefix="!",
     intents=intents
@@ -39,14 +38,14 @@ bot = commands.Bot(
 
 
 # =========================================================
-# TICKETS
+# DATOS DE LOS TICKETS
 # =========================================================
 
 tickets = {}
 
 
 # =========================================================
-# UTILIDADES
+# FUNCIONES
 # =========================================================
 
 def limpiar_nombre(nombre):
@@ -64,7 +63,47 @@ def es_staff(member):
 
 
 # =========================================================
-# EMBED PANEL
+# EMBED DE REGLAS
+# =========================================================
+
+def crear_reglas_embed():
+
+    embed = discord.Embed(
+        title="🎫 ¿Necesitas Ayuda?",
+        description=(
+            "Abre un ticket en la categoría que necesitas.\n"
+            "Ten paciencia a la hora de abrir un ticket o de lo "
+            "contrario serás sancionado. ⚠️\n\n"
+
+            "📋 **Reglas** 📋\n\n"
+
+            "⏳ **1)** Ten paciencia a la hora de abrir ticket. 🕐\n\n"
+
+            "🚫 **2)** No insultar al equipo del staff. ⚠️\n\n"
+
+            "📌 **3)** Estar activo en el ticket o de lo contrario "
+            "será cerrado por inactividad. 🕐\n\n"
+
+            "📂 **4)** Abrir ticket en su categoría correspondiente "
+            "o de lo contrario serás sancionado.\n\n"
+
+            "⚠️ **5)** Abrir ticket sin razón es sancionable. 🚫\n\n\n"
+
+            "🚀 **Te atenderemos lo más rápido posible!** ⚡"
+        ),
+        color=discord.Color.from_rgb(255, 170, 0)
+    )
+
+    if os.path.exists(LOGO_PATH):
+        embed.set_thumbnail(
+            url="attachment://logo.png"
+        )
+
+    return embed
+
+
+# =========================================================
+# EMBED DEL PANEL
 # =========================================================
 
 def crear_panel_embed():
@@ -99,47 +138,7 @@ def crear_panel_embed():
 
 
 # =========================================================
-# EMBED REGLAS
-# =========================================================
-
-def crear_reglas_embed():
-
-    embed = discord.Embed(
-        title="🎫 ¿Necesitas Ayuda?",
-        description=(
-            "Abre un ticket en la categoría que necesitas. "
-            "Ten paciencia a la hora de abrir un ticket o de lo "
-            "contrario serás sancionado. ⚠️\n\n"
-
-            "📋 **Reglas** 📋\n\n"
-
-            "⏳ **1)** Ten paciencia a la hora de abrir ticket. 🕐\n\n"
-
-            "🚫 **2)** No insultar al equipo del staff. ⚠️\n\n"
-
-            "📌 **3)** Estar activo en el ticket o de lo contrario "
-            "será cerrado por inactividad. 🕐\n\n"
-
-            "📂 **4)** Abrir ticket en su categoría correspondiente "
-            "o de lo contrario serás sancionado.\n\n"
-
-            "⚠️ **5)** Abrir ticket sin razón es sancionable. 🚫\n\n\n"
-
-            "🚀 **Te atenderemos lo más rápido posible!** ⚡"
-        ),
-        color=discord.Color.from_rgb(255, 170, 0)
-    )
-
-    if os.path.exists(LOGO_PATH):
-        embed.set_thumbnail(
-            url="attachment://logo.png"
-        )
-
-    return embed
-
-
-# =========================================================
-# PANEL DE TICKETS
+# PANEL DE CREACIÓN DE TICKETS
 # =========================================================
 
 class TicketView(discord.ui.View):
@@ -242,10 +241,7 @@ async def crear_ticket(interaction, categoria, emoji):
         )
         return
 
-    # -----------------------------------------------------
-    # COMPROBAR TICKET EXISTENTE
-    # -----------------------------------------------------
-
+    # Comprobar si ya tiene un ticket
     for datos in tickets.values():
 
         if (
@@ -267,10 +263,7 @@ async def crear_ticket(interaction, categoria, emoji):
                 )
                 return
 
-    # -----------------------------------------------------
-    # PERMISOS
-    # -----------------------------------------------------
-
+    # Permisos iniciales
     overwrites = {
 
         guild.default_role: discord.PermissionOverwrite(
@@ -297,15 +290,10 @@ async def crear_ticket(interaction, categoria, emoji):
             view_channel=True,
             send_messages=True,
             read_message_history=True,
-            send_messages=True,
             manage_channels=True,
             manage_messages=True
         )
     }
-
-    # -----------------------------------------------------
-    # CREAR CANAL
-    # -----------------------------------------------------
 
     nombre_usuario = limpiar_nombre(
         usuario.display_name
@@ -339,10 +327,7 @@ async def crear_ticket(interaction, categoria, emoji):
         )
         return
 
-    # -----------------------------------------------------
-    # GUARDAR DATOS
-    # -----------------------------------------------------
-
+    # Guardar información
     tickets[canal.id] = {
         "guild_id": guild.id,
         "channel_id": canal.id,
@@ -352,19 +337,12 @@ async def crear_ticket(interaction, categoria, emoji):
         "closed": False
     }
 
-    # -----------------------------------------------------
-    # RESPUESTA PRIVADA
-    # -----------------------------------------------------
-
     await interaction.response.send_message(
         f"✅ Tu ticket ha sido creado: {canal.mention}",
         ephemeral=True
     )
 
-    # -----------------------------------------------------
-    # EMBED
-    # -----------------------------------------------------
-
+    # Embed del ticket
     embed = discord.Embed(
         title=f"{emoji} {categoria}",
         description=(
@@ -398,10 +376,7 @@ async def crear_ticket(interaction, categoria, emoji):
         text="Eclipse World • Sistema de tickets"
     )
 
-    # -----------------------------------------------------
-    # ARCHIVO LOGO
-    # -----------------------------------------------------
-
+    # Enviar ticket
     if os.path.exists(LOGO_PATH):
 
         archivo = discord.File(
@@ -430,7 +405,7 @@ async def crear_ticket(interaction, categoria, emoji):
 
 
 # =========================================================
-# CONTROLES DEL TICKET
+# BOTONES DENTRO DEL TICKET
 # =========================================================
 
 class TicketControlView(discord.ui.View):
@@ -472,10 +447,6 @@ class TicketControlView(discord.ui.View):
             )
             return
 
-        # -------------------------------------------------
-        # YA RECLAMADO
-        # -------------------------------------------------
-
         if datos["claimed_by"] is not None:
 
             reclamado = canal.guild.get_member(
@@ -499,10 +470,7 @@ class TicketControlView(discord.ui.View):
             )
             return
 
-        # -------------------------------------------------
-        # GUARDAR STAFF
-        # -------------------------------------------------
-
+        # Guardar quién lo reclamó
         datos["claimed_by"] = usuario.id
 
         guild = canal.guild
@@ -515,10 +483,7 @@ class TicketControlView(discord.ui.View):
             datos["user_id"]
         )
 
-        # -------------------------------------------------
-        # BLOQUEAR ESCRITURA DEL STAFF GENERAL
-        # -------------------------------------------------
-
+        # El rol de staff puede ver pero NO escribir
         if soporte_role:
 
             await canal.set_permissions(
@@ -528,10 +493,7 @@ class TicketControlView(discord.ui.View):
                 read_message_history=True
             )
 
-        # -------------------------------------------------
-        # DAR ACCESO AL STAFF QUE RECLAMA
-        # -------------------------------------------------
-
+        # El staff que reclamó puede escribir
         await canal.set_permissions(
             usuario,
             view_channel=True,
@@ -541,10 +503,7 @@ class TicketControlView(discord.ui.View):
             embed_links=True
         )
 
-        # -------------------------------------------------
-        # ASEGURAR ACCESO DEL CREADOR
-        # -------------------------------------------------
-
+        # El creador puede escribir
         if creador:
 
             await canal.set_permissions(
@@ -556,23 +515,19 @@ class TicketControlView(discord.ui.View):
                 embed_links=True
             )
 
-        # -------------------------------------------------
-        # BOT
-        # -----------------------------------------------------
+        # El bot puede escribir
+        if guild.me:
 
-        await canal.set_permissions(
-            guild.me,
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_channels=True,
-            manage_messages=True
-        )
+            await canal.set_permissions(
+                guild.me,
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True
+            )
 
-        # -------------------------------------------------
-        # ACTUALIZAR BOTÓN
-        # -------------------------------------------------
-
+        # Cambiar botón
         button.disabled = True
         button.label = f"Reclamado por {usuario.display_name}"
         button.emoji = "✅"
@@ -580,10 +535,6 @@ class TicketControlView(discord.ui.View):
         await interaction.response.edit_message(
             view=self
         )
-
-        # -------------------------------------------------
-        # AVISO
-        # -------------------------------------------------
 
         await canal.send(
             f"📌 **Ticket reclamado**\n\n"
@@ -645,16 +596,9 @@ class TicketControlView(discord.ui.View):
             datos["user_id"]
         )
 
-        # -------------------------------------------------
-        # QUITAR RECLAMACIÓN
-        # -------------------------------------------------
-
         datos["claimed_by"] = None
 
-        # -------------------------------------------------
-        # DEVOLVER PERMISOS AL STAFF
-        # -------------------------------------------------
-
+        # Restaurar permisos del staff
         if soporte_role:
 
             await canal.set_permissions(
@@ -666,10 +610,7 @@ class TicketControlView(discord.ui.View):
                 embed_links=True
             )
 
-        # -------------------------------------------------
-        # MANTENER AL CREADOR
-        # -------------------------------------------------
-
+        # Mantener al creador
         if creador:
 
             await canal.set_permissions(
@@ -681,19 +622,13 @@ class TicketControlView(discord.ui.View):
                 embed_links=True
             )
 
-        # -------------------------------------------------
-        # QUITAR PERMISO INDIVIDUAL DEL STAFF
-        # -------------------------------------------------
-
+        # Eliminar permiso individual del staff
         await canal.set_permissions(
             usuario,
             overwrite=None
         )
 
-        # -------------------------------------------------
-        # RESTAURAR BOTÓN
-        # -------------------------------------------------
-
+        # Restaurar botón
         for item in self.children:
 
             if isinstance(item, discord.ui.Button):
@@ -781,7 +716,7 @@ class TicketControlView(discord.ui.View):
 
 
 # =========================================================
-# /TICKETPANEL
+# COMANDO /TICKETPANEL
 # =========================================================
 
 @bot.tree.command(
@@ -814,10 +749,7 @@ async def ticketpanel(interaction):
 
         try:
 
-            # -------------------------------------------------
-            # REGLAS
-            # -------------------------------------------------
-
+            # Reglas
             if os.path.exists(LOGO_PATH):
 
                 archivo_reglas = discord.File(
@@ -836,10 +768,7 @@ async def ticketpanel(interaction):
                     embed=crear_reglas_embed()
                 )
 
-            # -------------------------------------------------
-            # AVISO STAFF
-            # -------------------------------------------------
-
+            # Aviso al staff
             await canal.send(
                 f"👮 **Equipo de soporte:** <@&{ROL_SOPORTE}>\n\n"
                 "Cuando un usuario abra un ticket, un miembro "
@@ -847,10 +776,7 @@ async def ticketpanel(interaction):
                 "para atenderlo."
             )
 
-            # -------------------------------------------------
-            # PANEL
-            # -------------------------------------------------
-
+            # Panel
             if os.path.exists(LOGO_PATH):
 
                 archivo_panel = discord.File(
@@ -893,7 +819,7 @@ async def ticketpanel(interaction):
 
 
 # =========================================================
-# ERRORES /TICKETPANEL
+# ERRORES DEL COMANDO
 # =========================================================
 
 @ticketpanel.error
@@ -935,7 +861,7 @@ async def ticketpanel_error(interaction, error):
 
 
 # =========================================================
-# BOT READY
+# BOT LISTO
 # =========================================================
 
 @bot.event
@@ -943,7 +869,7 @@ async def on_ready():
 
     print(
         f"✅ Eclipse World Tickets conectado como "
-        f"{bot.user} (ID: {bot.user.id})"
+        f"{bot.user} | ID: {bot.user.id}"
     )
 
     # Vistas persistentes
@@ -971,7 +897,7 @@ async def on_ready():
 
 
 # =========================================================
-# ARRANQUE
+# INICIAR BOT
 # =========================================================
 
 if not TOKEN:
