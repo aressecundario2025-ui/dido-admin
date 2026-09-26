@@ -1,41 +1,54 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
 import os
 import sqlite3
-import json
+import discord
+
+from discord.ext import commands
+from discord import app_commands
 from datetime import datetime, timezone
 
-# ============================================================
-# ECLIPSE WORLD — TICKET SYSTEM
-# ============================================================
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+# =========================================================
+# CONFIGURACIÓN
+# =========================================================
 
-# Canales donde se puede publicar el panel
+TOKEN = os.getenv("TOKEN_DISCORD")
+
 PANEL_CHANNELS = [
     1434297124539076738,
-    1551198802164064266
+    1551198802164064266,
 ]
 
-# Rol existente de soporte
-SUPPORT_ROLE_ID = 1552374542909833246
+ROL_SOPORTE = 1552374542909833246
 
-# La categoría de cerrados la crea automáticamente el bot
+LOGO_PATH = "logo.png"
+DB_PATH = "tickets.db"
+
+OPEN_CATEGORY_NAME = "🎫 TICKETS"
 CLOSED_CATEGORY_NAME = "📂 TICKETS CERRADOS"
 
-# Logo
-LOGO_PATH = "logo.png"
 
-# Base de datos
-DATABASE = "tickets.db"
+# =========================================================
+# INTENTS
+# =========================================================
+
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+intents.messages = True
+intents.message_content = True
 
 
-# ============================================================
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
+
+
+# =========================================================
 # BASE DE DATOS
-# ============================================================
+# =========================================================
 
-db = sqlite3.connect(DATABASE, check_same_thread=False)
+db = sqlite3.connect(DB_PATH)
 db.row_factory = sqlite3.Row
 
 db.execute("""
@@ -45,280 +58,220 @@ CREATE TABLE IF NOT EXISTS tickets (
     user_id INTEGER NOT NULL,
     category TEXT NOT NULL,
     claimed_by INTEGER,
-    closed INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     closed_at TEXT,
-    form_answers TEXT
-)
-""")
-
-db.execute("""
-CREATE TABLE IF NOT EXISTS ratings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL,
-    guild_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    staff_id INTEGER,
-    rating INTEGER NOT NULL,
-    comment TEXT,
-    created_at TEXT NOT NULL,
-    UNIQUE(channel_id, user_id)
+    rating INTEGER,
+    rating_comment TEXT
 )
 """)
 
 db.commit()
 
 
-# ============================================================
-# CONFIGURACIÓN DEL BOT
-# ============================================================
-
-intents = discord.Intents.default()
-intents.guilds = True
-intents.members = True
-intents.messages = True
-
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
-
-views_loaded = False
+def get_ticket(channel_id):
+    return db.execute(
+        "SELECT * FROM tickets WHERE channel_id = ?",
+        (channel_id,)
+    ).fetchone()
 
 
-# ============================================================
-# CATEGORÍAS / FORMULARIOS
-# ============================================================
+def create_ticket(channel_id, guild_id, user_id, category):
+    db.execute(
+        """
+        INSERT INTO tickets
+        (channel_id, guild_id, user_id, category, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            channel_id,
+            guild_id,
+            user_id,
+            category,
+            datetime.now(timezone.utc).isoformat()
+        )
+    )
+    db.commit()
 
-TICKET_TYPES = {
 
-    "soporte": {
-        "name": "🎫 Soporte general",
-        "title": "Soporte general",
-        "description": "Ayuda general con Eclipse World.",
-        "color": discord.Color.blurple(),
-        "fields": [
-            {
-                "id": "problema",
-                "label": "¿En qué podemos ayudarte?",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "extra",
-                "label": "Información adicional",
-                "style": discord.TextStyle.paragraph,
-                "required": False
-            }
-        ]
-    },
+def claim_ticket(channel_id, staff_id):
+    db.execute(
+        "UPDATE tickets SET claimed_by = ? WHERE channel_id = ?",
+        (staff_id, channel_id)
+    )
+    db.commit()
 
-    "reportar": {
-        "name": "🚨 Reportar usuario",
-        "title": "Reporte de usuario",
-        "description": "Utiliza esta sección para reportar un comportamiento.",
-        "color": discord.Color.red(),
-        "fields": [
-            {
-                "id": "usuario",
-                "label": "Usuario a reportar",
-                "style": discord.TextStyle.short,
-                "required": True
-            },
-            {
-                "id": "motivo",
-                "label": "Motivo del reporte",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "pruebas",
-                "label": "Pruebas o enlaces",
-                "style": discord.TextStyle.paragraph,
-                "required": False
-            }
-        ]
-    },
 
-    "bug": {
-        "name": "🐛 Reportar bug",
-        "title": "Reporte de bug",
-        "description": "Ayúdanos a detectar y solucionar problemas.",
-        "color": discord.Color.orange(),
-        "fields": [
-            {
-                "id": "bug",
-                "label": "¿Qué bug encontraste?",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "lugar",
-                "label": "¿Dónde ocurre?",
-                "style": discord.TextStyle.short,
-                "required": True
-            },
-            {
-                "id": "pasos",
-                "label": "Pasos para reproducirlo",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "pruebas",
-                "label": "Pruebas o enlaces",
-                "style": discord.TextStyle.paragraph,
-                "required": False
-            }
-        ]
-    },
+def unclaim_ticket(channel_id):
+    db.execute(
+        "UPDATE tickets SET claimed_by = NULL WHERE channel_id = ?",
+        (channel_id,)
+    )
+    db.commit()
 
-    "postulacion": {
-        "name": "👥 Postulaciones",
-        "title": "Postulación",
-        "description": "Presenta tu candidatura para formar parte del equipo.",
-        "color": discord.Color.green(),
-        "fields": [
-            {
-                "id": "puesto",
-                "label": "¿A qué puesto te postulas?",
-                "style": discord.TextStyle.short,
-                "required": True
-            },
-            {
-                "id": "motivo",
-                "label": "¿Por qué quieres entrar?",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "experiencia",
-                "label": "Experiencia previa",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            }
-        ]
-    },
 
-    "estafa": {
-        "name": "💰 Estafas",
-        "title": "Reporte de estafa",
-        "description": "Reporta posibles estafas o fraudes.",
-        "color": discord.Color.red(),
-        "fields": [
-            {
-                "id": "usuario",
-                "label": "Usuario involucrado",
-                "style": discord.TextStyle.short,
-                "required": True
-            },
-            {
-                "id": "ocurrido",
-                "label": "¿Qué ocurrió?",
-                "style": discord.TextStyle.paragraph,
-                "required": True
-            },
-            {
-                "id": "pruebas",
-                "label": "Pruebas o enlaces",
-                "style": discord.TextStyle.paragraph,
-                "required": False
-            }
-        ]
-    }
+def close_ticket(channel_id):
+    db.execute(
+        """
+        UPDATE tickets
+        SET closed_at = ?
+        WHERE channel_id = ?
+        """,
+        (
+            datetime.now(timezone.utc).isoformat(),
+            channel_id
+        )
+    )
+    db.commit()
+
+
+def save_rating(channel_id, rating, comment):
+    db.execute(
+        """
+        UPDATE tickets
+        SET rating = ?, rating_comment = ?
+        WHERE channel_id = ?
+        """,
+        (
+            rating,
+            comment,
+            channel_id
+        )
+    )
+    db.commit()
+
+
+# =========================================================
+# UTILIDADES
+# =========================================================
+
+def is_support(member: discord.Member):
+    return (
+        member.guild_permissions.administrator
+        or any(role.id == ROL_SOPORTE for role in member.roles)
+    )
+
+
+def get_support_role(guild):
+    return guild.get_role(ROL_SOPORTE)
+
+
+def get_logo():
+    if os.path.exists(LOGO_PATH):
+        return discord.File(LOGO_PATH, filename="logo.png")
+
+    return None
+
+
+def logo_embed(embed):
+    if os.path.exists(LOGO_PATH):
+        embed.set_thumbnail(url="attachment://logo.png")
+
+
+async def get_or_create_category(guild, name, private=False):
+
+    existing = discord.utils.get(
+        guild.categories,
+        name=name
+    )
+
+    if existing:
+        return existing
+
+    overwrites = {}
+
+    if private:
+        overwrites[guild.default_role] = discord.PermissionOverwrite(
+            view_channel=False
+        )
+
+        support_role = get_support_role(guild)
+
+        if support_role:
+            overwrites[support_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                manage_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
+
+    return await guild.create_category(
+        name=name,
+        overwrites=overwrites,
+        reason="Sistema de tickets Eclipse World"
+    )
+
+
+# =========================================================
+# PREGUNTAS DE LOS FORMULARIOS
+# =========================================================
+
+QUESTIONS = {
+
+    "🎫 Soporte general": [
+        ("problema", "¿En qué podemos ayudarte?", True),
+        ("info", "Añade información adicional", False),
+    ],
+
+    "🚨 Reportar usuario": [
+        ("usuario", "Usuario que quieres reportar", True),
+        ("motivo", "¿Qué ha ocurrido?", True),
+        ("pruebas", "Pruebas / información adicional", False),
+    ],
+
+    "🐛 Reportar bug": [
+        ("bug", "Describe el bug", True),
+        ("lugar", "¿Dónde ocurre?", True),
+        ("pasos", "¿Cómo podemos reproducirlo?", False),
+    ],
+
+    "👥 Postulaciones": [
+        ("usuario", "Tu nombre / usuario", True),
+        ("puesto", "¿A qué puesto te presentas?", True),
+        ("experiencia", "Cuéntanos tu experiencia", True),
+        ("info", "Información adicional", False),
+    ],
+
+    "💰 Estafas": [
+        ("usuario", "Usuario relacionado con la estafa", True),
+        ("problema", "¿Qué ha ocurrido?", True),
+        ("pruebas", "Pruebas / información adicional", False),
+    ],
 }
 
 
-# ============================================================
-# UTILIDADES
-# ============================================================
-
-def now():
-    return datetime.now(timezone.utc)
-
-
-def discord_timestamp(dt=None):
-    if dt is None:
-        dt = now()
-    return f"<t:{int(dt.timestamp())}:F>"
-
-
-def is_support(member: discord.Member):
-    role = member.guild.get_role(SUPPORT_ROLE_ID)
-
-    if role is None:
-        return False
-
-    return role in member.roles or member.guild_permissions.administrator
-
-
-async def get_closed_category(guild: discord.Guild):
-
-    category = discord.utils.get(
-        guild.categories,
-        name=CLOSED_CATEGORY_NAME
-    )
-
-    if category:
-        return category
-
-    support_role = guild.get_role(SUPPORT_ROLE_ID)
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(
-            view_channel=False
-        )
-    }
-
-    if support_role:
-        overwrites[support_role] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=False,
-            read_message_history=True
-        )
-
-    if guild.me:
-        overwrites[guild.me] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_channels=True,
-            manage_messages=True
-        )
-
-    category = await guild.create_category(
-        CLOSED_CATEGORY_NAME,
-        overwrites=overwrites,
-        reason="Eclipse World ticket archive"
-    )
-
-    return category
-
-
-# ============================================================
-# FORMULARIO
-# ============================================================
+# =========================================================
+# MODAL
+# =========================================================
 
 class TicketModal(discord.ui.Modal):
 
-    def __init__(self, ticket_type):
-
-        self.ticket_type = ticket_type
-        data = TICKET_TYPES[ticket_type]
-
+    def __init__(self, category):
         super().__init__(
-            title=data["title"][:45]
+            title=f"Eclipse World • {category}"
         )
 
+        self.category = category
         self.inputs = []
 
-        for field in data["fields"]:
+        questions = QUESTIONS[category]
+
+        for custom_id, label, required in questions:
 
             text_input = discord.ui.TextInput(
-                label=field["label"][:45],
-                custom_id=field["id"],
-                style=field["style"],
-                required=field["required"],
+                custom_id=custom_id,
+                label=label[:45],
+                style=discord.TextStyle.paragraph,
+                required=required,
                 max_length=1000
             )
 
@@ -330,222 +283,146 @@ class TicketModal(discord.ui.Modal):
         guild = interaction.guild
 
         if guild is None:
+            await interaction.response.send_message(
+                "❌ Este sistema solo funciona dentro del servidor.",
+                ephemeral=True
+            )
             return
 
-        # ====================================================
-        # COMPROBAR TICKET ABIERTO
-        # ====================================================
+        await interaction.response.defer(ephemeral=True)
 
-        existing = db.execute("""
-            SELECT channel_id
-            FROM tickets
-            WHERE guild_id = ?
-            AND user_id = ?
-            AND closed = 0
-        """, (
-            guild.id,
-            interaction.user.id
-        )).fetchone()
-
-        if existing:
-
-            channel = guild.get_channel(
-                existing["channel_id"]
-            )
-
-            if channel:
-
-                await interaction.response.send_message(
-                    f"⚠️ Ya tienes un ticket abierto: {channel.mention}",
-                    ephemeral=True
-                )
-
-                return
-
-            db.execute("""
-                UPDATE tickets
-                SET closed = 1
-                WHERE channel_id = ?
-            """, (
-                existing["channel_id"],
-            ))
-
-            db.commit()
-
-        # ====================================================
-        # RESPUESTAS
-        # ====================================================
-
-        answers = {}
-
-        for item in self.inputs:
-            answers[item.custom_id] = item.value
-
-        data = TICKET_TYPES[self.ticket_type]
-
-        # ====================================================
-        # PERMISOS
-        # ====================================================
-
-        support_role = guild.get_role(
-            SUPPORT_ROLE_ID
+        # Categoría de tickets abiertos
+        open_category = await get_or_create_category(
+            guild,
+            OPEN_CATEGORY_NAME,
+            private=False
         )
+
+        support_role = get_support_role(guild)
 
         overwrites = {
 
-            guild.default_role:
-                discord.PermissionOverwrite(
-                    view_channel=False
-                ),
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=False
+            ),
 
-            interaction.user:
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    attach_files=True,
-                    embed_links=True
-                )
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
         }
 
         if support_role:
-
-            overwrites[support_role] = \
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    attach_files=True,
-                    embed_links=True
-                )
+            overwrites[support_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
 
         if guild.me:
+            overwrites[guild.me] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                manage_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
 
-            overwrites[guild.me] = \
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    manage_channels=True,
-                    manage_messages=True,
-                    read_message_history=True,
-                    attach_files=True,
-                    embed_links=True
-                )
+        username = interaction.user.name.lower()
+        username = username.replace(" ", "-")
 
-        # ====================================================
-        # NOMBRE
-        # ====================================================
+        channel_name = f"ticket-{username}"
 
-        username = (
-            interaction.user.name
-            .lower()
-            .replace(" ", "-")
+        # Evitar duplicados
+        existing = discord.utils.find(
+            lambda c: c.name == channel_name,
+            guild.text_channels
         )
 
-        channel_name = f"ticket-{username}"[:100]
+        if existing:
+            await interaction.followup.send(
+                f"⚠️ Ya tienes un ticket abierto: {existing.mention}",
+                ephemeral=True
+            )
+            return
 
         channel = await guild.create_text_channel(
-            name=channel_name,
+            name=channel_name[:100],
+            category=open_category,
             overwrites=overwrites,
             reason="Nuevo ticket Eclipse World"
         )
 
-        # ====================================================
-        # GUARDAR
-        # ====================================================
-
-        db.execute("""
-            INSERT INTO tickets (
-                channel_id,
-                guild_id,
-                user_id,
-                category,
-                claimed_by,
-                closed,
-                created_at,
-                form_answers
-            )
-            VALUES (?, ?, ?, ?, NULL, 0, ?, ?)
-        """, (
+        create_ticket(
             channel.id,
             guild.id,
             interaction.user.id,
-            self.ticket_type,
-            now().isoformat(),
-            json.dumps(
-                answers,
-                ensure_ascii=False
-            )
-        ))
+            self.category
+        )
 
-        db.commit()
-
-        # ====================================================
-        # EMBED
-        # ====================================================
+        # =================================================
+        # EMBED DEL TICKET
+        # =================================================
 
         embed = discord.Embed(
-            title=f"{data['name']}",
+            title="🎫 Ticket creado",
             description=(
-                f"## Eclipse World Support\n\n"
-                f"Hola {interaction.user.mention} 👋\n\n"
-                f"Tu solicitud ha sido registrada correctamente.\n"
-                f"Un miembro del equipo la revisará lo antes posible.\n\n"
-                f"**Estado:** 🟢 Abierto\n"
-                f"**Creado:** {discord_timestamp()}"
+                f"Hola {interaction.user.mention}, tu ticket ha sido creado.\n\n"
+                f"**Categoría:** {self.category}\n\n"
+                "Un miembro del equipo te atenderá lo antes posible."
             ),
-            color=data["color"]
+            color=discord.Color.blurple(),
+            timestamp=datetime.now(timezone.utc)
         )
 
-        embed.set_footer(
-            text="Eclipse World • Support System"
-        )
+        for text_input in self.inputs:
 
-        if os.path.exists(LOGO_PATH):
+            value = text_input.value.strip()
 
-            file = discord.File(
-                LOGO_PATH,
-                filename="logo.png"
+            if not value:
+                value = "No especificado"
+
+            embed.add_field(
+                name=text_input.label,
+                value=value[:1024],
+                inline=False
             )
 
+        embed.set_footer(
+            text="Eclipse World • Sistema de soporte"
+        )
+
+        logo_file = get_logo()
+
+        if logo_file:
             embed.set_thumbnail(
                 url="attachment://logo.png"
             )
 
-        else:
-            file = None
-
-        # ====================================================
-        # RESPUESTAS FORMULARIO
-        # ====================================================
-
-        for field in data["fields"]:
-
-            value = answers.get(
-                field["id"],
-                ""
-            )
-
-            if value:
-
-                embed.add_field(
-                    name=field["label"],
-                    value=value[:1024],
-                    inline=False
-                )
-
-        content = (
-            f"{interaction.user.mention}\n"
-            f"<@&{SUPPORT_ROLE_ID}>"
+        support_mention = (
+            support_role.mention
+            if support_role
+            else "@Soporte"
         )
 
-        if file:
+        content = (
+            f"{interaction.user.mention} {support_mention}\n\n"
+            "📌 **Un miembro del soporte puede reclamar este ticket.**"
+        )
+
+        if logo_file:
 
             await channel.send(
                 content=content,
                 embed=embed,
-                file=file,
+                file=logo_file,
                 view=TicketControlView()
             )
 
@@ -557,184 +434,206 @@ class TicketModal(discord.ui.Modal):
                 view=TicketControlView()
             )
 
-        await interaction.response.send_message(
-            f"✅ Tu ticket ha sido creado: {channel.mention}",
+        await interaction.followup.send(
+            f"✅ Ticket creado correctamente: {channel.mention}",
             ephemeral=True
         )
 
 
-# ============================================================
+# =========================================================
 # PANEL PRINCIPAL
-# ============================================================
+# =========================================================
 
 class TicketPanelView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="Soporte",
-        emoji="🎫",
-        style=discord.ButtonStyle.primary,
-        custom_id="ew_ticket_support"
-    )
-    async def support(self, interaction, button):
+    async def open_modal(
+        self,
+        interaction: discord.Interaction,
+        category: str
+    ):
 
         await interaction.response.send_modal(
-            TicketModal("soporte")
+            TicketModal(category)
+        )
+
+    @discord.ui.button(
+        label="Soporte general",
+        emoji="🎫",
+        style=discord.ButtonStyle.primary,
+        custom_id="ticket_support"
+    )
+    async def support(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.open_modal(
+            interaction,
+            "🎫 Soporte general"
         )
 
     @discord.ui.button(
         label="Reportar usuario",
         emoji="🚨",
         style=discord.ButtonStyle.danger,
-        custom_id="ew_ticket_report"
+        custom_id="ticket_report"
     )
-    async def report(self, interaction, button):
-
-        await interaction.response.send_modal(
-            TicketModal("reportar")
+    async def report(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.open_modal(
+            interaction,
+            "🚨 Reportar usuario"
         )
 
     @discord.ui.button(
-        label="Bug",
+        label="Reportar bug",
         emoji="🐛",
         style=discord.ButtonStyle.secondary,
-        custom_id="ew_ticket_bug"
+        custom_id="ticket_bug"
     )
-    async def bug(self, interaction, button):
-
-        await interaction.response.send_modal(
-            TicketModal("bug")
+    async def bug(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.open_modal(
+            interaction,
+            "🐛 Reportar bug"
         )
 
     @discord.ui.button(
-        label="Postulación",
+        label="Postulaciones",
         emoji="👥",
         style=discord.ButtonStyle.success,
-        custom_id="ew_ticket_application"
+        custom_id="ticket_apply"
     )
-    async def application(self, interaction, button):
-
-        await interaction.response.send_modal(
-            TicketModal("postulacion")
+    async def apply(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.open_modal(
+            interaction,
+            "👥 Postulaciones"
         )
 
     @discord.ui.button(
-        label="Estafa",
+        label="Estafas",
         emoji="💰",
         style=discord.ButtonStyle.danger,
-        custom_id="ew_ticket_scam"
+        custom_id="ticket_scam"
     )
-    async def scam(self, interaction, button):
-
-        await interaction.response.send_modal(
-            TicketModal("estafa")
+    async def scam(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.open_modal(
+            interaction,
+            "💰 Estafas"
         )
 
 
-# ============================================================
-# CONTROLES DE TICKET
-# ============================================================
+# =========================================================
+# CONTROL DEL TICKET
+# =========================================================
 
 class TicketControlView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    # ========================================================
-    # RECLAMAR
-    # ========================================================
-
     @discord.ui.button(
-        label="Reclamar",
+        label="Reclamar ticket",
         emoji="📌",
         style=discord.ButtonStyle.primary,
-        custom_id="ew_ticket_claim"
+        custom_id="ticket_claim"
     )
-    async def claim(self, interaction, button):
+    async def claim(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        if not interaction.guild:
+        if not isinstance(interaction.user, discord.Member):
             return
 
         if not is_support(interaction.user):
 
             await interaction.response.send_message(
-                "⛔ Esta acción está reservada al equipo de soporte.",
+                "❌ Solo el equipo de soporte puede reclamar tickets.",
                 ephemeral=True
             )
-
             return
 
-        ticket = db.execute("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = ?
-        """, (
-            interaction.channel.id,
-        )).fetchone()
+        ticket = get_ticket(interaction.channel.id)
 
         if not ticket:
 
             await interaction.response.send_message(
-                "❌ Este ticket no está registrado.",
+                "❌ Este canal no está registrado como ticket.",
                 ephemeral=True
             )
-
             return
 
-        if ticket["closed"]:
+        if ticket["closed_at"]:
 
             await interaction.response.send_message(
-                "🔒 Este ticket ya está cerrado.",
+                "❌ Este ticket ya está cerrado.",
                 ephemeral=True
             )
-
             return
 
         if ticket["claimed_by"]:
 
-            staff = interaction.guild.get_member(
+            claimer = interaction.guild.get_member(
                 ticket["claimed_by"]
             )
 
             name = (
-                staff.mention
-                if staff
+                claimer.mention
+                if claimer
                 else f"<@{ticket['claimed_by']}>"
             )
 
             await interaction.response.send_message(
-                f"📌 Este ticket ya está siendo atendido por {name}.",
+                f"📌 Este ticket ya ha sido reclamado por {name}.",
                 ephemeral=True
             )
-
             return
 
-        db.execute("""
-            UPDATE tickets
-            SET claimed_by = ?
-            WHERE channel_id = ?
-        """, (
-            interaction.user.id,
-            interaction.channel.id
-        ))
-
-        db.commit()
-
-        support_role = interaction.guild.get_role(
-            SUPPORT_ROLE_ID
+        claim_ticket(
+            interaction.channel.id,
+            interaction.user.id
         )
 
+        ticket = get_ticket(
+            interaction.channel.id
+        )
+
+        support_role = get_support_role(
+            interaction.guild
+        )
+
+        # El soporte deja de escribir
         if support_role:
 
             await interaction.channel.set_permissions(
                 support_role,
                 view_channel=True,
                 send_messages=False,
-                read_message_history=True
+                read_message_history=True,
+                attach_files=False,
+                embed_links=True
             )
 
+        # El staff que reclama sí puede escribir
         await interaction.channel.set_permissions(
             interaction.user,
             view_channel=True,
@@ -744,7 +643,7 @@ class TicketControlView(discord.ui.View):
             embed_links=True
         )
 
-        button.label = f"Atendido por {interaction.user.display_name}"
+        button.label = f"Reclamado por {interaction.user.display_name}"
         button.disabled = True
 
         await interaction.response.edit_message(
@@ -752,50 +651,43 @@ class TicketControlView(discord.ui.View):
         )
 
         await interaction.channel.send(
-            f"📌 **{interaction.user.mention} ha tomado este ticket.**\n\n"
-            f"El resto del equipo puede seguir consultándolo, "
-            f"pero únicamente el usuario y el staff asignado podrán escribir."
+            f"📌 **Ticket reclamado por {interaction.user.mention}.**\n"
+            "Este miembro del staff se encargará del ticket."
         )
 
-    # ========================================================
-    # LIBERAR
-    # ========================================================
-
     @discord.ui.button(
-        label="Liberar",
+        label="Liberar ticket",
         emoji="🔄",
         style=discord.ButtonStyle.secondary,
-        custom_id="ew_ticket_release"
+        custom_id="ticket_unclaim"
     )
-    async def release(self, interaction, button):
+    async def unclaim(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        if not interaction.guild:
+        if not isinstance(interaction.user, discord.Member):
             return
 
         if not is_support(interaction.user):
 
             await interaction.response.send_message(
-                "⛔ Esta acción está reservada al equipo de soporte.",
+                "❌ Solo el equipo de soporte puede utilizar esto.",
                 ephemeral=True
             )
-
             return
 
-        ticket = db.execute("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = ?
-        """, (
-            interaction.channel.id,
-        )).fetchone()
+        ticket = get_ticket(
+            interaction.channel.id
+        )
 
         if not ticket:
 
             await interaction.response.send_message(
-                "❌ Ticket no encontrado.",
+                "❌ Este canal no es un ticket.",
                 ephemeral=True
             )
-
             return
 
         if not ticket["claimed_by"]:
@@ -804,30 +696,25 @@ class TicketControlView(discord.ui.View):
                 "ℹ️ Este ticket no está reclamado.",
                 ephemeral=True
             )
-
             return
 
-        if ticket["claimed_by"] != interaction.user.id:
+        if (
+            ticket["claimed_by"] != interaction.user.id
+            and not interaction.user.guild_permissions.administrator
+        ):
 
             await interaction.response.send_message(
-                "⛔ Solo puede liberar el ticket la persona que lo reclamó.",
+                "❌ Solo quien reclamó el ticket puede liberarlo.",
                 ephemeral=True
             )
-
             return
 
-        db.execute("""
-            UPDATE tickets
-            SET claimed_by = NULL
-            WHERE channel_id = ?
-        """, (
-            interaction.channel.id,
-        ))
+        unclaim_ticket(
+            interaction.channel.id
+        )
 
-        db.commit()
-
-        support_role = interaction.guild.get_role(
-            SUPPORT_ROLE_ID
+        support_role = get_support_role(
+            interaction.guild
         )
 
         if support_role:
@@ -843,131 +730,100 @@ class TicketControlView(discord.ui.View):
 
         await interaction.channel.set_permissions(
             interaction.user,
-            overwrite=None
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True,
+            embed_links=True
         )
 
-        claim_button = discord.utils.get(
-            self.children,
-            custom_id="ew_ticket_claim"
+        await interaction.response.send_message(
+            "🔄 Ticket liberado. El equipo de soporte vuelve a poder responder.",
         )
-
-        if claim_button:
-
-            claim_button.label = "Reclamar"
-            claim_button.disabled = False
-
-        await interaction.response.edit_message(
-            view=self
-        )
-
-        await interaction.channel.send(
-            f"🔄 **{interaction.user.mention} ha liberado el ticket.**"
-        )
-
-    # ========================================================
-    # CERRAR
-    # ========================================================
 
     @discord.ui.button(
-        label="Cerrar",
+        label="Cerrar ticket",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
-        custom_id="ew_ticket_close"
+        custom_id="ticket_close"
     )
-    async def close(self, interaction, button):
+    async def close(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        if not interaction.guild:
+        if not isinstance(interaction.user, discord.Member):
             return
 
         if not is_support(interaction.user):
 
             await interaction.response.send_message(
-                "⛔ Solo el equipo de soporte puede cerrar tickets.",
+                "❌ Solo el equipo de soporte puede cerrar tickets.",
                 ephemeral=True
             )
-
             return
 
-        ticket = db.execute("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = ?
-        """, (
-            interaction.channel.id,
-        )).fetchone()
+        ticket = get_ticket(
+            interaction.channel.id
+        )
 
         if not ticket:
 
             await interaction.response.send_message(
-                "❌ Ticket no encontrado.",
+                "❌ Este canal no es un ticket.",
                 ephemeral=True
             )
-
             return
 
-        if ticket["closed"]:
+        if ticket["closed_at"]:
 
             await interaction.response.send_message(
-                "🔒 Este ticket ya está cerrado.",
+                "❌ Este ticket ya está cerrado.",
                 ephemeral=True
             )
-
             return
 
-        await interaction.response.defer()
-
-        # ====================================================
-        # CATEGORÍA ARCHIVO
-        # ====================================================
-
-        closed_category = await get_closed_category(
-            interaction.guild
+        await interaction.response.send_message(
+            "🔒 Cerrando ticket y archivándolo..."
         )
 
-        # ====================================================
-        # DATABASE
-        # ====================================================
-
-        db.execute("""
-            UPDATE tickets
-            SET closed = 1,
-                closed_at = ?
-            WHERE channel_id = ?
-        """, (
-            now().isoformat(),
+        close_ticket(
             interaction.channel.id
-        ))
-
-        db.commit()
-
-        # ====================================================
-        # MOVER
-        # ====================================================
-
-        await interaction.channel.edit(
-            category=closed_category,
-            reason="Ticket cerrado y archivado"
         )
 
-        # ====================================================
-        # BLOQUEAR USUARIO
-        # ====================================================
+        guild = interaction.guild
 
-        user = interaction.guild.get_member(
+        closed_category = await get_or_create_category(
+            guild,
+            CLOSED_CATEGORY_NAME,
+            private=True
+        )
+
+        requester = guild.get_member(
             ticket["user_id"]
         )
 
-        if user:
+        support_role = get_support_role(
+            guild
+        )
+
+        # =================================================
+        # PERMISOS DEL TICKET CERRADO
+        # =================================================
+
+        await interaction.channel.set_permissions(
+            guild.default_role,
+            view_channel=False
+        )
+
+        if requester:
 
             await interaction.channel.set_permissions(
-                user,
+                requester,
                 view_channel=False,
                 send_messages=False
             )
-
-        support_role = interaction.guild.get_role(
-            SUPPORT_ROLE_ID
-        )
 
         if support_role:
 
@@ -978,127 +834,90 @@ class TicketControlView(discord.ui.View):
                 read_message_history=True
             )
 
-        # Staff que lo atendió
-        if ticket["claimed_by"]:
+        if guild.me:
 
-            staff = interaction.guild.get_member(
-                ticket["claimed_by"]
+            await interaction.channel.set_permissions(
+                guild.me,
+                view_channel=True,
+                send_messages=True,
+                manage_channels=True,
+                manage_messages=True,
+                read_message_history=True
             )
 
-            if staff:
-
-                await interaction.channel.set_permissions(
-                    staff,
-                    view_channel=True,
-                    send_messages=False,
-                    read_message_history=True
-                )
-
-        # ====================================================
-        # NOMBRE
-        # ====================================================
-
-        new_name = interaction.channel.name
-
-        if not new_name.startswith("🔒-"):
-
-            new_name = f"🔒-{new_name}"
-
         await interaction.channel.edit(
-            name=new_name[:100]
+            category=closed_category,
+            sync_permissions=False
         )
 
-        # ====================================================
-        # RESUMEN
-        # ====================================================
-
-        category_data = TICKET_TYPES.get(
-            ticket["category"]
-        )
-
-        category_name = (
-            category_data["name"]
-            if category_data
-            else ticket["category"]
-        )
-
-        claimed = (
-            f"<@{ticket['claimed_by']}>"
-            if ticket["claimed_by"]
-            else "Sin asignar"
-        )
+        # =================================================
+        # EMBED DE CIERRE
+        # =================================================
 
         embed = discord.Embed(
-            title="📁 TICKET ARCHIVADO",
+            title="🔒 Ticket cerrado",
             description=(
-                "Este ticket ha sido cerrado y archivado.\n"
-                "La conversación se conserva para el equipo de Eclipse World."
+                "Este ticket ha sido cerrado y archivado.\n\n"
+                "La conversación **no ha sido eliminada**."
             ),
-            color=discord.Color.dark_grey()
+            color=discord.Color.red(),
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
             name="👤 Usuario",
-            value=f"<@{ticket['user_id']}",
+            value=f"<@{ticket['user_id']}>",
             inline=True
         )
 
         embed.add_field(
             name="📂 Categoría",
-            value=category_name,
+            value=ticket["category"],
             inline=True
         )
 
         embed.add_field(
-            name="👮 Atendido por",
-            value=claimed,
-            inline=True
-        )
-
-        embed.add_field(
-            name="🔒 Cerrado por",
+            name="🛡️ Cerrado por",
             value=interaction.user.mention,
             inline=True
         )
 
-        embed.add_field(
-            name="🕐 Fecha",
-            value=discord_timestamp(),
-            inline=True
-        )
-
         embed.set_footer(
-            text="Eclipse World • Ticket Archive"
+            text="Eclipse World • Ticket archivado"
         )
 
-        await interaction.channel.send(
-            embed=embed
-        )
+        logo_file = get_logo()
 
-        # ====================================================
-        # VALORACIÓN
-        # ====================================================
+        if logo_file:
 
-        if user:
+            await interaction.channel.send(
+                embed=embed,
+                file=logo_file
+            )
+
+        else:
+
+            await interaction.channel.send(
+                embed=embed
+            )
+
+        # =================================================
+        # RATING POR DM
+        # =================================================
+
+        if requester:
 
             try:
 
-                rating_embed = discord.Embed(
-                    title="⭐ Tu opinión importa",
-                    description=(
-                        "Tu ticket de **Eclipse World** ha sido cerrado.\n\n"
-                        "Selecciona una valoración de **1 a 5 estrellas** "
-                        "para valorar la atención recibida."
+                await requester.send(
+                    embed=discord.Embed(
+                        title="⭐ Valora tu atención",
+                        description=(
+                            f"Tu ticket en **{guild.name}** ha terminado.\n\n"
+                            "Selecciona una valoración del 1 al 5."
+                        ),
+                        color=discord.Color.gold()
                     ),
-                    color=discord.Color.gold()
-                )
-
-                rating_embed.set_footer(
-                    text="Eclipse World • Support Quality"
-                )
-
-                await user.send(
-                    embed=rating_embed,
                     view=RatingView(
                         interaction.channel.id
                     )
@@ -1107,41 +926,87 @@ class TicketControlView(discord.ui.View):
             except discord.Forbidden:
 
                 await interaction.channel.send(
-                    f"⚠️ No se pudo enviar la valoración a <@{ticket['user_id']}> "
-                    f"porque tiene los mensajes directos cerrados."
+                    f"⚠️ No se pudo enviar la valoración a "
+                    f"{requester.mention} porque tiene los MD cerrados."
                 )
 
-        await interaction.followup.send(
-            "✅ Ticket cerrado y archivado. La conversación no ha sido eliminada.",
+
+# =========================================================
+# RATING
+# =========================================================
+
+class RatingModal(discord.ui.Modal):
+
+    def __init__(self, channel_id, rating):
+        super().__init__(
+            title="⭐ Comentario de valoración"
+        )
+
+        self.channel_id = channel_id
+        self.rating = rating
+
+        self.comment = discord.ui.TextInput(
+            label="Comentario (opcional)",
+            style=discord.TextStyle.paragraph,
+            required=False,
+            max_length=1000,
+            placeholder="Cuéntanos qué tal fue la atención..."
+        )
+
+        self.add_item(self.comment)
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        ticket = get_ticket(
+            self.channel_id
+        )
+
+        if not ticket:
+
+            await interaction.response.send_message(
+                "❌ No se encontró el ticket.",
+                ephemeral=True
+            )
+            return
+
+        if ticket["rating"]:
+
+            await interaction.response.send_message(
+                "⚠️ Ya has valorado este ticket.",
+                ephemeral=True
+            )
+            return
+
+        save_rating(
+            self.channel_id,
+            self.rating,
+            self.comment.value
+        )
+
+        await interaction.response.send_message(
+            f"⭐ Gracias por valorar la atención con **{self.rating}/5**.",
             ephemeral=True
         )
 
 
-# ============================================================
-# VALORACIONES
-# ============================================================
-
 class RatingView(discord.ui.View):
 
     def __init__(self, channel_id):
-
         super().__init__(timeout=None)
-
         self.channel_id = channel_id
 
     async def rate(
         self,
-        interaction,
-        rating
+        interaction: discord.Interaction,
+        rating: int
     ):
 
-        ticket = db.execute("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = ?
-        """, (
-            self.channel_id,
-        )).fetchone()
+        ticket = get_ticket(
+            self.channel_id
+        )
 
         if not ticket:
 
@@ -1149,61 +1014,26 @@ class RatingView(discord.ui.View):
                 "❌ Ticket no encontrado.",
                 ephemeral=True
             )
-
             return
 
-        if interaction.user.id != ticket["user_id"]:
+        if ticket["user_id"] != interaction.user.id:
 
             await interaction.response.send_message(
-                "⛔ Esta valoración pertenece a otro usuario.",
+                "❌ Esta valoración no es para ti.",
                 ephemeral=True
             )
-
             return
 
-        existing = db.execute("""
-            SELECT id
-            FROM ratings
-            WHERE channel_id = ?
-            AND user_id = ?
-        """, (
-            self.channel_id,
-            interaction.user.id
-        )).fetchone()
-
-        if existing:
+        if ticket["rating"]:
 
             await interaction.response.send_message(
-                "⭐ Ya has valorado este ticket.",
+                "⚠️ Ya has valorado este ticket.",
                 ephemeral=True
             )
-
             return
-
-        db.execute("""
-            INSERT INTO ratings (
-                channel_id,
-                guild_id,
-                user_id,
-                staff_id,
-                rating,
-                comment,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, NULL, ?)
-        """, (
-            self.channel_id,
-            ticket["guild_id"],
-            interaction.user.id,
-            ticket["claimed_by"],
-            rating,
-            now().isoformat()
-        ))
-
-        db.commit()
 
         await interaction.response.send_modal(
-            RatingCommentModal(
+            RatingModal(
                 self.channel_id,
                 rating
             )
@@ -1212,302 +1042,208 @@ class RatingView(discord.ui.View):
     @discord.ui.button(
         label="1",
         emoji="⭐",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ew_rating_1"
+        style=discord.ButtonStyle.danger,
+        custom_id="rating_1"
     )
-    async def one(self, interaction, button):
+    async def one(
+        self,
+        interaction,
+        button
+    ):
         await self.rate(interaction, 1)
 
     @discord.ui.button(
         label="2",
         emoji="⭐",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ew_rating_2"
+        style=discord.ButtonStyle.danger,
+        custom_id="rating_2"
     )
-    async def two(self, interaction, button):
+    async def two(
+        self,
+        interaction,
+        button
+    ):
         await self.rate(interaction, 2)
 
     @discord.ui.button(
         label="3",
         emoji="⭐",
         style=discord.ButtonStyle.secondary,
-        custom_id="ew_rating_3"
+        custom_id="rating_3"
     )
-    async def three(self, interaction, button):
+    async def three(
+        self,
+        interaction,
+        button
+    ):
         await self.rate(interaction, 3)
 
     @discord.ui.button(
         label="4",
         emoji="⭐",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ew_rating_4"
+        style=discord.ButtonStyle.success,
+        custom_id="rating_4"
     )
-    async def four(self, interaction, button):
+    async def four(
+        self,
+        interaction,
+        button
+    ):
         await self.rate(interaction, 4)
 
     @discord.ui.button(
         label="5",
         emoji="⭐",
         style=discord.ButtonStyle.success,
-        custom_id="ew_rating_5"
+        custom_id="rating_5"
     )
-    async def five(self, interaction, button):
+    async def five(
+        self,
+        interaction,
+        button
+    ):
         await self.rate(interaction, 5)
 
 
-# ============================================================
-# COMENTARIO DE VALORACIÓN
-# ============================================================
-
-class RatingCommentModal(discord.ui.Modal):
-
-    def __init__(
-        self,
-        channel_id,
-        rating
-    ):
-
-        super().__init__(
-            title="Comentario opcional"
-        )
-
-        self.channel_id = channel_id
-        self.rating = rating
-
-        self.comment = discord.ui.TextInput(
-            label="¿Quieres dejar un comentario?",
-            placeholder="Cuéntanos qué tal fue la atención...",
-            style=discord.TextStyle.paragraph,
-            required=False,
-            max_length=1000
-        )
-
-        self.add_item(self.comment)
-
-    async def on_submit(self, interaction):
-
-        db.execute("""
-            UPDATE ratings
-            SET comment = ?
-            WHERE channel_id = ?
-            AND user_id = ?
-        """, (
-            self.comment.value or None,
-            self.channel_id,
-            interaction.user.id
-        ))
-
-        db.commit()
-
-        ticket = db.execute("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = ?
-        """, (
-            self.channel_id,
-        )).fetchone()
-
-        if ticket:
-
-            guild = bot.get_guild(
-                ticket["guild_id"]
-            )
-
-            if guild:
-
-                channel = guild.get_channel(
-                    self.channel_id
-                )
-
-                if channel:
-
-                    comment = (
-                        self.comment.value
-                        if self.comment.value
-                        else "Sin comentario"
-                    )
-
-                    embed = discord.Embed(
-                        title="⭐ Nueva valoración",
-                        color=discord.Color.gold()
-                    )
-
-                    embed.add_field(
-                        name="👤 Usuario",
-                        value=interaction.user.mention,
-                        inline=True
-                    )
-
-                    embed.add_field(
-                        name="⭐ Puntuación",
-                        value=f"{self.rating}/5",
-                        inline=True
-                    )
-
-                    embed.add_field(
-                        name="💬 Comentario",
-                        value=comment[:1024],
-                        inline=False
-                    )
-
-                    embed.set_footer(
-                        text="Eclipse World • Support Quality"
-                    )
-
-                    await channel.send(
-                        embed=embed
-                    )
-
-        await interaction.response.send_message(
-            "⭐ Gracias por valorar el soporte de Eclipse World.",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# /ticketpanel
-# ============================================================
+# =========================================================
+# COMANDO /TICKETPANEL
+# =========================================================
 
 @bot.tree.command(
     name="ticketpanel",
-    description="Publica el sistema de tickets de Eclipse World"
+    description="Publica el panel de tickets de Eclipse World"
 )
-@app_commands.checks.has_permissions(
-    administrator=True
-)
+@app_commands.checks.has_permissions(administrator=True)
 async def ticketpanel(
     interaction: discord.Interaction
 ):
 
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
     embed = discord.Embed(
-        title="ECLIPSE WORLD",
+        title="🌌 ECLIPSE WORLD",
         description=(
-            "## 🎫 Centro de soporte\n\n"
-            "Bienvenido al sistema oficial de soporte de **Eclipse World**.\n\n"
-            "Selecciona la categoría que corresponda a tu solicitud. "
-            "Antes de crear el ticket se te solicitará información "
-            "para que el equipo pueda atenderte correctamente.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "### 📋 Normativa\n\n"
-            "⏳ **1.** Ten paciencia durante la atención.\n\n"
-            "🚫 **2.** No insultes ni faltes al respeto al equipo.\n\n"
-            "📌 **3.** Mantente activo en tu ticket.\n\n"
-            "📂 **4.** Utiliza la categoría correspondiente.\n\n"
-            "⚠️ **5.** Abrir tickets sin motivo puede ser sancionable.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🚀 **Nuestro equipo atenderá tu solicitud lo antes posible.**"
+            "🎫 **¿Necesitas Ayuda? Abre un ticket en la categoría "
+            "que necesitas! Ten paciencia a la hora de abrir ticket "
+            "o de lo contrario serás sancionado!** ⚠️\n\n"
+
+            "📋 **Reglas** 📋\n\n"
+
+            "⏳ *1)* **Ten paciencia a la hora de abrir ticket!** 🕐\n\n"
+
+            "🚫 *2)* **No insultar al equipo del staff!** ⚠️\n\n"
+
+            "📌 *3)* **Estar activo en el ticket o de lo contrario "
+            "será cerrado por inactividad!** 🕐\n\n"
+
+            "📂 *4)* **Abrir ticket en su categoría que corresponde "
+            "o de lo contrario serás sancionado!**\n\n"
+
+            "⚠️ *5)* **Abrir ticket sin razón es sancionable!** 🚫\n\n\n"
+
+            "🚀 **Te atenderemos lo mas rápido posible!** ⚡"
         ),
         color=discord.Color.blurple()
     )
 
     embed.set_footer(
-        text="Eclipse World • Official Support System"
+        text="Eclipse World • Sistema oficial de soporte"
     )
 
-    if os.path.exists(LOGO_PATH):
+    # Logo
+    logo_file = get_logo()
 
-        file = discord.File(
-            LOGO_PATH,
-            filename="logo.png"
+    # Publicar en los dos canales
+    sent = []
+
+    for channel_id in PANEL_CHANNELS:
+
+        channel = interaction.guild.get_channel(
+            channel_id
         )
 
-        embed.set_thumbnail(
-            url="attachment://logo.png"
-        )
+        if not channel:
+            continue
 
-        await interaction.response.send_message(
-            embed=embed,
-            file=file,
-            view=TicketPanelView()
+        try:
+
+            if logo_file:
+                # Hay que generar un archivo nuevo por canal
+                file = get_logo()
+
+                await channel.send(
+                    embed=embed,
+                    file=file,
+                    view=TicketPanelView()
+                )
+
+            else:
+
+                await channel.send(
+                    embed=embed,
+                    view=TicketPanelView()
+                )
+
+            sent.append(channel.mention)
+
+        except discord.Forbidden:
+            pass
+
+    if sent:
+
+        await interaction.followup.send(
+            "✅ Panel publicado correctamente en:\n"
+            + "\n".join(sent),
+            ephemeral=True
         )
 
     else:
 
-        await interaction.response.send_message(
-            embed=embed,
-            view=TicketPanelView()
-        )
-
-
-@ticketpanel.error
-async def ticketpanel_error(
-    interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-
-        await interaction.response.send_message(
-            "⛔ Necesitas permisos de administrador.",
+        await interaction.followup.send(
+            "❌ No pude publicar el panel. "
+            "Comprueba los permisos del bot.",
             ephemeral=True
         )
 
 
-# ============================================================
-# /ticketstats
-# ============================================================
+# =========================================================
+# /TICKETSTATS
+# =========================================================
 
 @bot.tree.command(
     name="ticketstats",
-    description="Muestra estadísticas del sistema de soporte"
+    description="Muestra estadísticas del sistema de tickets"
 )
-@app_commands.checks.has_permissions(
-    administrator=True
-)
+@app_commands.checks.has_permissions(administrator=True)
 async def ticketstats(
     interaction: discord.Interaction
 ):
 
-    total = db.execute("""
-        SELECT COUNT(*) AS total
-        FROM tickets
-        WHERE guild_id = ?
-    """, (
-        interaction.guild.id,
-    )).fetchone()["total"]
+    total = db.execute(
+        "SELECT COUNT(*) FROM tickets"
+    ).fetchone()[0]
 
-    open_tickets = db.execute("""
-        SELECT COUNT(*) AS total
-        FROM tickets
-        WHERE guild_id = ?
-        AND closed = 0
-    """, (
-        interaction.guild.id,
-    )).fetchone()["total"]
+    closed = db.execute(
+        "SELECT COUNT(*) FROM tickets WHERE closed_at IS NOT NULL"
+    ).fetchone()[0]
 
-    closed = db.execute("""
-        SELECT COUNT(*) AS total
-        FROM tickets
-        WHERE guild_id = ?
-        AND closed = 1
-    """, (
-        interaction.guild.id,
-    )).fetchone()["total"]
+    rated = db.execute(
+        "SELECT COUNT(*) FROM tickets WHERE rating IS NOT NULL"
+    ).fetchone()[0]
 
-    rating_data = db.execute("""
-        SELECT
-            COUNT(*) AS amount,
-            AVG(rating) AS average
-        FROM ratings
-        WHERE guild_id = ?
-    """, (
-        interaction.guild.id,
-    )).fetchone()
+    average = db.execute(
+        "SELECT AVG(rating) FROM tickets WHERE rating IS NOT NULL"
+    ).fetchone()[0]
 
-    amount = rating_data["amount"] or 0
-    average = rating_data["average"]
-
-    average_text = (
-        f"{average:.2f}/5"
-        if average is not None
-        else "Sin valoraciones"
-    )
+    if average is None:
+        average_text = "Sin valoraciones"
+    else:
+        average_text = f"{average:.2f}/5 ⭐"
 
     embed = discord.Embed(
-        title="📊 Eclipse World • Support Analytics",
+        title="📊 Estadísticas de tickets",
         color=discord.Color.blurple()
     )
 
@@ -1518,31 +1254,21 @@ async def ticketstats(
     )
 
     embed.add_field(
-        name="🟢 Abiertos",
-        value=str(open_tickets),
-        inline=True
-    )
-
-    embed.add_field(
-        name="🔒 Cerrados",
+        name="🔒 Tickets cerrados",
         value=str(closed),
         inline=True
     )
 
     embed.add_field(
-        name="⭐ Valoraciones",
-        value=str(amount),
+        name="⭐ Tickets valorados",
+        value=str(rated),
         inline=True
     )
 
     embed.add_field(
-        name="📈 Media",
+        name="📈 Valoración media",
         value=average_text,
-        inline=True
-    )
-
-    embed.set_footer(
-        text="Eclipse World • Support Analytics"
+        inline=False
     )
 
     await interaction.response.send_message(
@@ -1551,9 +1277,74 @@ async def ticketstats(
     )
 
 
-# ============================================================
-# INICIO
-# ============================================================
+# =========================================================
+# ERRORES DE COMANDOS
+# =========================================================
+
+@ticketpanel.error
+async def ticketpanel_error(
+    interaction: discord.Interaction,
+    error
+):
+
+    if isinstance(
+        error,
+        app_commands.errors.MissingPermissions
+    ):
+
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "❌ Necesitas permisos de administrador.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ Necesitas permisos de administrador.",
+                ephemeral=True
+            )
+
+    else:
+
+        print(
+            f"Error /ticketpanel: {error}"
+        )
+
+
+@ticketstats.error
+async def ticketstats_error(
+    interaction: discord.Interaction,
+    error
+):
+
+    if isinstance(
+        error,
+        app_commands.errors.MissingPermissions
+    ):
+
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                "❌ Necesitas permisos de administrador.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ Necesitas permisos de administrador.",
+                ephemeral=True
+            )
+
+    else:
+
+        print(
+            f"Error /ticketstats: {error}"
+        )
+
+
+# =========================================================
+# READY
+# =========================================================
+
+views_loaded = False
+
 
 @bot.event
 async def on_ready():
@@ -1570,23 +1361,37 @@ async def on_ready():
             TicketControlView()
         )
 
-        await bot.tree.sync()
-
         views_loaded = True
 
+    try:
+
+        synced = await bot.tree.sync()
+
+        print(
+            f"✅ {len(synced)} comandos sincronizados."
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ Error sincronizando comandos: {error}"
+        )
+
     print(
-        f"✅ Eclipse World Tickets conectado como {bot.user}"
+        f"🌌 Eclipse World Ticket Bot conectado como "
+        f"{bot.user} ({bot.user.id})"
     )
 
 
-# ============================================================
+# =========================================================
 # ARRANQUE
-# ============================================================
+# =========================================================
 
 if not TOKEN:
 
     raise RuntimeError(
-        "❌ No existe la variable DISCORD_TOKEN en Railway."
+        "❌ Falta la variable TOKEN_DISCORD en Railway."
     )
+
 
 bot.run(TOKEN)
