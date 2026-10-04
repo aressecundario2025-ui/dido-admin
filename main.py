@@ -1,128 +1,107 @@
 import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 
-# ============================================================
-# CORRUPTION NETWORK
-# TICKETS + ADMINISTRACIÓN
-# ============================================================
+# =========================================================
+# CONFIGURACIÓN
+# =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-# Canales
-TICKET_PANEL_CHANNEL_ID = int(os.getenv("TICKET_PANEL_CHANNEL_ID", "0"))
-TICKET_CATEGORY_ID = int(os.getenv("TICKET_CATEGORY_ID", "0"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-RATINGS_CHANNEL_ID = int(os.getenv("RATINGS_CHANNEL_ID", "0"))
-TRANSCRIPT_CHANNEL_ID = int(os.getenv("TRANSCRIPT_CHANNEL_ID", "0"))
+TICKET_PANEL_CHANNEL_ID = int(
+    os.getenv("TICKET_PANEL_CHANNEL_ID", "0")
+)
 
-# Roles
-STAFF_ROLE_ID = int(os.getenv("STAFF_ROLE_ID", "0"))
-ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0"))
+TICKET_CATEGORY_ID = int(
+    os.getenv("TICKET_CATEGORY_ID", "0")
+)
 
-DATABASE = "corruption_network.db"
+LOG_CHANNEL_ID = int(
+    os.getenv("LOG_CHANNEL_ID", "0")
+)
+
+RATINGS_CHANNEL_ID = int(
+    os.getenv("RATINGS_CHANNEL_ID", "0")
+)
+
+TRANSCRIPT_CHANNEL_ID = int(
+    os.getenv("TRANSCRIPT_CHANNEL_ID", "0")
+)
+
+STAFF_ROLE_ID = int(
+    os.getenv("STAFF_ROLE_ID", "0")
+)
+
+ADMIN_ROLE_ID = int(
+    os.getenv("ADMIN_ROLE_ID", "0")
+)
 
 
-# ============================================================
+# =========================================================
 # INTENTS
-# ============================================================
+# =========================================================
 
 intents = discord.Intents.default()
-intents.guilds = True
 intents.members = True
-intents.moderation = True
+intents.message_content = True
+intents.guilds = True
 
 
-# ============================================================
+# =========================================================
 # BOT
-# ============================================================
+# =========================================================
 
-class CorruptionNetwork(commands.Bot):
-
-    def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None
-        )
-
-    async def setup_hook(self):
-
-        init_database()
-
-        # Registrar vistas persistentes
-        self.add_view(TicketPanelView())
-        self.add_view(TicketControlView())
-
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-
-            self.tree.copy_global_to(guild=guild)
-
-            await self.tree.sync(guild=guild)
-
-            print(f"[OK] Comandos sincronizados en {GUILD_ID}")
-
-        else:
-            await self.tree.sync()
-
-            print("[OK] Comandos globales sincronizados")
-
-    async def on_ready(self):
-
-        print("=" * 55)
-        print("CORRUPTION NETWORK")
-        print("=" * 55)
-        print(f"Bot: {self.user}")
-        print(f"ID: {self.user.id}")
-        print(f"Servidores: {len(self.guilds)}")
-        print("=" * 55)
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents,
+    help_command=None
+)
 
 
-bot = CorruptionNetwork()
-
-
-# ============================================================
+# =========================================================
 # DATABASE
-# ============================================================
+# =========================================================
 
-def db_connect():
-    return sqlite3.connect(DATABASE)
+DB_FILE = "corruption_network.db"
+
+
+def db_connection():
+    return sqlite3.connect(DB_FILE)
 
 
 def init_database():
-
-    db = db_connect()
-    cursor = db.cursor()
+    conn = db_connection()
+    cursor = conn.cursor()
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS tickets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_id INTEGER UNIQUE,
-            guild_id INTEGER,
-            user_id INTEGER,
-            staff_id INTEGER DEFAULT NULL,
+            channel_id INTEGER PRIMARY KEY,
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             category TEXT NOT NULL,
-            reason TEXT,
+            staff_id INTEGER,
             created_at TEXT NOT NULL,
-            closed_at TEXT DEFAULT NULL
+            closed_at TEXT
         )
     """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_id INTEGER UNIQUE,
-            staff_id INTEGER,
-            user_id INTEGER,
+            guild_id INTEGER NOT NULL,
+            ticket_channel_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            staff_id INTEGER NOT NULL,
             rating INTEGER NOT NULL,
+            comment TEXT,
             created_at TEXT NOT NULL
         )
     """)
@@ -130,390 +109,558 @@ def init_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS warnings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id INTEGER,
-            user_id INTEGER,
-            moderator_id INTEGER,
-            reason TEXT,
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL,
+            reason TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
     """)
 
-    db.commit()
-    db.close()
+    conn.commit()
+    conn.close()
 
 
-# ============================================================
+init_database()
+
+
+# =========================================================
+# COLORES
+# =========================================================
+
+COLOR_MAIN = discord.Color.from_rgb(150, 0, 0)
+COLOR_SUCCESS = discord.Color.green()
+COLOR_ERROR = discord.Color.red()
+COLOR_WARNING = discord.Color.orange()
+COLOR_INFO = discord.Color.blurple()
+
+
+# =========================================================
 # UTILIDADES
-# ============================================================
+# =========================================================
 
-def utc_now():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def is_staff(member: discord.Member):
-
-    if member.guild_permissions.administrator:
-        return True
-
-    if STAFF_ROLE_ID:
-        if any(role.id == STAFF_ROLE_ID for role in member.roles):
-            return True
-
-    if ADMIN_ROLE_ID:
-        if any(role.id == ADMIN_ROLE_ID for role in member.roles):
-            return True
-
-    return False
+def now():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def is_admin(member: discord.Member):
+def has_staff_role(member: discord.Member) -> bool:
+    if STAFF_ROLE_ID == 0:
+        return False
 
-    if member.guild_permissions.administrator:
-        return True
-
-    if ADMIN_ROLE_ID:
-        return any(
-            role.id == ADMIN_ROLE_ID
-            for role in member.roles
-        )
-
-    return False
-
-
-def embed(
-    title,
-    description,
-    color=discord.Color.blurple()
-):
-
-    e = discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=datetime.now(timezone.utc)
+    return any(
+        role.id == STAFF_ROLE_ID
+        for role in member.roles
     )
 
-    e.set_footer(
-        text="Corruption Network"
+
+def has_admin_role(member: discord.Member) -> bool:
+    if ADMIN_ROLE_ID == 0:
+        return False
+
+    return any(
+        role.id == ADMIN_ROLE_ID
+        for role in member.roles
     )
 
-    return e
+
+def is_staff_or_admin(member: discord.Member) -> bool:
+    return (
+        has_staff_role(member)
+        or has_admin_role(member)
+        or member.guild_permissions.administrator
+    )
 
 
-async def send_log(
-    guild,
-    title,
-    description,
-    color=discord.Color.blurple()
-):
-
-    if not LOG_CHANNEL_ID:
+async def send_log(guild: discord.Guild, embed: discord.Embed):
+    if LOG_CHANNEL_ID == 0:
         return
 
     channel = guild.get_channel(LOG_CHANNEL_ID)
 
-    if not channel:
+    if channel is None:
         return
 
     try:
-
-        await channel.send(
-            embed=embed(
-                title,
-                description,
-                color
-            )
-        )
-
-    except discord.HTTPException:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
         pass
 
 
-def get_ticket(channel_id):
-
-    db = db_connect()
-    cursor = db.cursor()
+def get_open_ticket(user_id: int, guild_id: int):
+    conn = db_connection()
+    cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT
-            id,
-            channel_id,
-            guild_id,
-            user_id,
-            staff_id,
-            category,
-            reason,
-            created_at,
-            closed_at
+        SELECT channel_id
+        FROM tickets
+        WHERE user_id = ?
+        AND guild_id = ?
+        AND closed_at IS NULL
+    """, (user_id, guild_id))
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result[0] if result else None
+
+
+def get_ticket(channel_id: int):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT channel_id, guild_id, user_id, category,
+               staff_id, created_at, closed_at
         FROM tickets
         WHERE channel_id = ?
     """, (channel_id,))
 
     result = cursor.fetchone()
 
-    db.close()
+    conn.close()
 
     return result
 
 
-# ============================================================
-# TICKET MODAL
-# ============================================================
+def set_ticket_staff(channel_id: int, staff_id: int):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE tickets
+        SET staff_id = ?
+        WHERE channel_id = ?
+    """, (staff_id, channel_id))
+
+    conn.commit()
+    conn.close()
+
+
+def close_ticket_database(channel_id: int):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE tickets
+        SET closed_at = ?
+        WHERE channel_id = ?
+    """, (now(), channel_id))
+
+    conn.commit()
+    conn.close()
+
+
+def create_ticket_database(
+    channel_id: int,
+    guild_id: int,
+    user_id: int,
+    category: str
+):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO tickets
+        (
+            channel_id,
+            guild_id,
+            user_id,
+            category,
+            staff_id,
+            created_at,
+            closed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        channel_id,
+        guild_id,
+        user_id,
+        category,
+        None,
+        now(),
+        None
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# TRANSCRIPCIÓN
+# =========================================================
+
+async def create_transcript(
+    channel: discord.TextChannel
+):
+    messages = []
+
+    try:
+        async for message in channel.history(
+            limit=None,
+            oldest_first=True
+        ):
+            timestamp = message.created_at.strftime(
+                "%d/%m/%Y %H:%M:%S"
+            )
+
+            content = message.content
+
+            if not content:
+                content = "[Sin contenido]"
+
+            attachments = ""
+
+            if message.attachments:
+                attachments = " | Adjuntos: " + ", ".join(
+                    attachment.url
+                    for attachment in message.attachments
+                )
+
+            messages.append(
+                f"[{timestamp}] "
+                f"{message.author} ({message.author.id}): "
+                f"{content}{attachments}"
+            )
+
+    except discord.Forbidden:
+        return None
+
+    transcript = "\n".join(messages)
+
+    if not transcript:
+        transcript = "No hay mensajes."
+
+    filename = f"transcript-{channel.id}.txt"
+
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(
+            f"CORRUPTION NETWORK\n"
+            f"TICKET: {channel.name}\n"
+            f"CHANNEL ID: {channel.id}\n"
+            f"{'=' * 70}\n\n"
+        )
+
+        file.write(transcript)
+
+    return filename
+
+
+# =========================================================
+# PANEL DE TICKETS
+# =========================================================
+
+class TicketPanelView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def create_ticket(
+        self,
+        interaction: discord.Interaction,
+        category: str,
+        emoji: str
+    ):
+        if interaction.guild is None:
+            return
+
+        existing = get_open_ticket(
+            interaction.user.id,
+            interaction.guild.id
+        )
+
+        if existing:
+            channel = interaction.guild.get_channel(existing)
+
+            if channel:
+                await interaction.response.send_message(
+                    f"❌ Ya tienes un ticket abierto: {channel.mention}",
+                    ephemeral=True
+                )
+                return
+
+        if TICKET_CATEGORY_ID == 0:
+            await interaction.response.send_message(
+                "❌ El sistema de tickets todavía no está configurado.",
+                ephemeral=True
+            )
+            return
+
+        category_channel = interaction.guild.get_channel(
+            TICKET_CATEGORY_ID
+        )
+
+        if not isinstance(
+            category_channel,
+            discord.CategoryChannel
+        ):
+            await interaction.response.send_message(
+                "❌ La categoría de tickets configurada no es válida.",
+                ephemeral=True
+            )
+            return
+
+        modal = TicketModal(
+            category,
+            emoji
+        )
+
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="Soporte",
+        emoji="🎫",
+        style=discord.ButtonStyle.primary,
+        custom_id="cn_ticket_support"
+    )
+    async def support(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "Soporte",
+            "🎫"
+        )
+
+    @discord.ui.button(
+        label="Reportar bug",
+        emoji="🐛",
+        style=discord.ButtonStyle.success,
+        custom_id="cn_ticket_bug"
+    )
+    async def bug(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "Bug",
+            "🐛"
+        )
+
+    @discord.ui.button(
+        label="Reportar usuario",
+        emoji="🚨",
+        style=discord.ButtonStyle.danger,
+        custom_id="cn_ticket_report"
+    )
+    async def report(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "Reporte",
+            "🚨"
+        )
+
+    @discord.ui.button(
+        label="Estafa",
+        emoji="💰",
+        style=discord.ButtonStyle.danger,
+        custom_id="cn_ticket_scam"
+    )
+    async def scam(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "Estafa",
+            "💰"
+        )
+
+    @discord.ui.button(
+        label="Postulación",
+        emoji="📋",
+        style=discord.ButtonStyle.secondary,
+        custom_id="cn_ticket_application"
+    )
+    async def application(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "Postulación",
+            "📋"
+        )
+
+
+# =========================================================
+# MODAL DE CREACIÓN
+# =========================================================
 
 class TicketModal(discord.ui.Modal):
 
-    def __init__(self, category):
-
-        self.category = category
-
-        titles = {
-            "soporte": "Soporte general",
-            "bug": "Reportar bug",
-            "reporte": "Reportar usuario",
-            "estafa": "Reportar estafa",
-            "postulacion": "Postulación"
-        }
-
+    def __init__(self, category: str, emoji: str):
         super().__init__(
-            title=titles.get(
-                category,
-                "Crear ticket"
-            )
+            title=f"{emoji} {category}"
         )
 
-    motivo = discord.ui.TextInput(
-        label="Explica tu solicitud",
-        placeholder="Escribe aquí todos los detalles...",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        min_length=5,
-        max_length=1500
-    )
+        self.category = category
+        self.emoji = emoji
+
+        self.reason = discord.ui.TextInput(
+            label="Explícanos tu situación",
+            placeholder="Escribe aquí todos los detalles...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            min_length=5,
+            max_length=1500
+        )
+
+        self.add_item(self.reason)
 
     async def on_submit(
         self,
         interaction: discord.Interaction
     ):
-
         guild = interaction.guild
-        user = interaction.user
 
-        if not guild:
+        if guild is None:
             return
 
-        # ----------------------------------------------------
-        # COMPROBAR TICKET ABIERTO
-        # ----------------------------------------------------
-
-        db = db_connect()
-        cursor = db.cursor()
-
-        cursor.execute("""
-            SELECT channel_id
-            FROM tickets
-            WHERE guild_id = ?
-            AND user_id = ?
-            AND closed_at IS NULL
-        """, (
-            guild.id,
-            user.id
-        ))
-
-        existing = cursor.fetchone()
-
-        db.close()
+        existing = get_open_ticket(
+            interaction.user.id,
+            guild.id
+        )
 
         if existing:
-
-            channel = guild.get_channel(existing[0])
+            channel = guild.get_channel(existing)
 
             if channel:
-
                 await interaction.response.send_message(
                     f"❌ Ya tienes un ticket abierto: {channel.mention}",
                     ephemeral=True
                 )
-
                 return
 
-        # ----------------------------------------------------
-        # CATEGORÍA
-        # ----------------------------------------------------
+        category_channel = guild.get_channel(
+            TICKET_CATEGORY_ID
+        )
 
-        category_channel = None
-
-        if TICKET_CATEGORY_ID:
-
-            category_channel = guild.get_channel(
-                TICKET_CATEGORY_ID
+        if not isinstance(
+            category_channel,
+            discord.CategoryChannel
+        ):
+            await interaction.response.send_message(
+                "❌ La categoría de tickets no está configurada.",
+                ephemeral=True
             )
+            return
 
-        # ----------------------------------------------------
-        # PERMISOS
-        # ----------------------------------------------------
+        bot_member = guild.me
 
         overwrites = {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=False
+            ),
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            ),
+            bot_member: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True
+            )
+        }
 
-            guild.default_role:
-                discord.PermissionOverwrite(
-                    view_channel=False
-                ),
+        if STAFF_ROLE_ID != 0:
+            staff_role = guild.get_role(STAFF_ROLE_ID)
 
-            user:
-                discord.PermissionOverwrite(
+            if staff_role:
+                overwrites[staff_role] = discord.PermissionOverwrite(
                     view_channel=True,
                     send_messages=True,
                     read_message_history=True,
                     attach_files=True,
                     embed_links=True
-                ),
+                )
 
-            guild.me:
-                discord.PermissionOverwrite(
+        if ADMIN_ROLE_ID != 0:
+            admin_role = guild.get_role(ADMIN_ROLE_ID)
+
+            if admin_role:
+                overwrites[admin_role] = discord.PermissionOverwrite(
                     view_channel=True,
                     send_messages=True,
                     read_message_history=True,
                     manage_channels=True,
                     manage_messages=True
                 )
-        }
 
-        staff_role = None
+        safe_name = interaction.user.name.lower()
 
-        if STAFF_ROLE_ID:
-
-            staff_role = guild.get_role(
-                STAFF_ROLE_ID
-            )
-
-        if staff_role:
-
-            overwrites[staff_role] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True,
-                embed_links=True
-            )
-
-        # ----------------------------------------------------
-        # NOMBRE
-        # ----------------------------------------------------
-
-        username = user.name.lower()
-
-        username = "".join(
+        safe_name = "".join(
             character
-            for character in username
-            if character.isalnum() or character == "-"
+            for character in safe_name
+            if character.isalnum() or character in "-_"
         )
 
-        channel_name = f"ticket-{username}"
+        if not safe_name:
+            safe_name = "usuario"
 
-        # ----------------------------------------------------
-        # CREAR CANAL
-        # ----------------------------------------------------
+        channel_name = f"{self.category.lower()}-{safe_name}"
+
+        if len(channel_name) > 90:
+            channel_name = channel_name[:90]
 
         try:
-
             channel = await guild.create_text_channel(
                 channel_name,
                 category=category_channel,
                 overwrites=overwrites,
-                topic=f"Ticket de {user} | ID {user.id}"
+                topic=(
+                    f"Ticket de {interaction.user} | "
+                    f"Categoría: {self.category}"
+                )
             )
-
         except discord.Forbidden:
-
             await interaction.response.send_message(
-                "❌ No tengo permisos para crear canales.",
+                "❌ No tengo permisos para crear tickets.",
                 ephemeral=True
             )
-
             return
 
-        # ----------------------------------------------------
-        # GUARDAR TICKET
-        # ----------------------------------------------------
-
-        db = db_connect()
-        cursor = db.cursor()
-
-        cursor.execute("""
-            INSERT INTO tickets (
-                channel_id,
-                guild_id,
-                user_id,
-                category,
-                reason,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
+        create_ticket_database(
             channel.id,
             guild.id,
-            user.id,
-            self.category,
-            self.motivo.value,
-            utc_now()
-        ))
-
-        db.commit()
-
-        ticket_id = cursor.lastrowid
-
-        db.close()
-
-        # ----------------------------------------------------
-        # EMBED
-        # ----------------------------------------------------
-
-        category_names = {
-            "soporte": "🎫 Soporte general",
-            "bug": "🐛 Reporte de bug",
-            "reporte": "🚨 Reporte de usuario",
-            "estafa": "💰 Reporte de estafa",
-            "postulacion": "📋 Postulación"
-        }
-
-        category_name = category_names.get(
-            self.category,
-            "🎫 Ticket"
+            interaction.user.id,
+            self.category
         )
 
-        ticket_embed = embed(
-            f"{category_name}",
-            (
-                f"Bienvenido {user.mention}.\n\n"
-                "Tu solicitud ha sido creada correctamente. "
-                "Un miembro del equipo la atenderá lo antes posible.\n\n"
-                f"**Solicitud:**\n"
-                f"{self.motivo.value}"
+        embed = discord.Embed(
+            title=f"{self.emoji} Ticket de {self.category}",
+            description=(
+                f"Hola {interaction.user.mention}.\n\n"
+                "Un miembro del equipo atenderá tu solicitud "
+                "lo antes posible.\n\n"
+                f"**Motivo:**\n{self.reason.value}"
             ),
-            discord.Color.blurple()
+            color=COLOR_MAIN,
+            timestamp=datetime.utcnow()
         )
 
-        ticket_embed.add_field(
-            name="Estado",
-            value="🟢 Abierto",
-            inline=True
-        )
-
-        ticket_embed.add_field(
-            name="Ticket",
-            value=f"`#{ticket_id}`",
-            inline=True
-        )
-
-        ticket_embed.add_field(
-            name="Usuario",
-            value=user.mention,
-            inline=True
+        embed.set_footer(
+            text="Corruption Network • Sistema de Tickets"
         )
 
         await channel.send(
-            content=user.mention,
-            embed=ticket_embed,
+            content=interaction.user.mention,
+            embed=embed,
             view=TicketControlView()
         )
 
@@ -522,123 +669,313 @@ class TicketModal(discord.ui.Modal):
             ephemeral=True
         )
 
-        await send_log(
-            guild,
-            "🎫 Ticket creado",
-            (
-                f"**Usuario:** {user.mention}\n"
-                f"**Canal:** {channel.mention}\n"
-                f"**Categoría:** {category_name}\n"
-                f"**ID:** `{ticket_id}`"
+        log_embed = discord.Embed(
+            title="🎫 Ticket creado",
+            color=COLOR_SUCCESS,
+            timestamp=datetime.utcnow()
+        )
+
+        log_embed.add_field(
+            name="Usuario",
+            value=(
+                f"{interaction.user.mention}\n"
+                f"`{interaction.user.id}`"
             ),
-            discord.Color.green()
+            inline=True
         )
 
+        log_embed.add_field(
+            name="Categoría",
+            value=self.category,
+            inline=True
+        )
 
-# ============================================================
-# PANEL DE TICKETS
-# ============================================================
+        log_embed.add_field(
+            name="Canal",
+            value=channel.mention,
+            inline=True
+        )
 
-class TicketPanelView(discord.ui.View):
+        await send_log(guild, log_embed)
+
+
+# =========================================================
+# VISTA DE CONTROL DEL TICKET
+# =========================================================
+
+class TicketControlView(discord.ui.View):
 
     def __init__(self):
-
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="Soporte",
-        emoji="🎫",
+        label="Reclamar",
+        emoji="🙋",
         style=discord.ButtonStyle.primary,
-        custom_id="cn_ticket_soporte"
+        custom_id="cn_ticket_claim"
     )
-    async def soporte(
+    async def claim(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
+        if interaction.guild is None:
+            return
 
-        await interaction.response.send_modal(
-            TicketModal("soporte")
+        if not isinstance(
+            interaction.user,
+            discord.Member
+        ):
+            return
+
+        if not is_staff_or_admin(interaction.user):
+            await interaction.response.send_message(
+                "❌ Solo el equipo de staff puede reclamar tickets.",
+                ephemeral=True
+            )
+            return
+
+        ticket = get_ticket(
+            interaction.channel.id
+        )
+
+        if not ticket:
+            await interaction.response.send_message(
+                "❌ Este canal no está registrado como ticket.",
+                ephemeral=True
+            )
+            return
+
+        staff_id = ticket[4]
+
+        if staff_id:
+            staff = interaction.guild.get_member(staff_id)
+
+            if staff:
+                await interaction.response.send_message(
+                    f"❌ Este ticket ya fue reclamado por "
+                    f"{staff.mention}.",
+                    ephemeral=True
+                )
+                return
+
+        set_ticket_staff(
+            interaction.channel.id,
+            interaction.user.id
+        )
+
+        embed = discord.Embed(
+            title="🙋 Ticket reclamado",
+            description=(
+                f"Este ticket será atendido por "
+                f"{interaction.user.mention}."
+            ),
+            color=COLOR_SUCCESS,
+            timestamp=datetime.utcnow()
+        )
+
+        await interaction.channel.send(
+            embed=embed
+        )
+
+        await interaction.response.send_message(
+            "✅ Has reclamado este ticket.",
+            ephemeral=True
+        )
+
+        log_embed = discord.Embed(
+            title="🙋 Ticket reclamado",
+            color=COLOR_INFO,
+            timestamp=datetime.utcnow()
+        )
+
+        log_embed.add_field(
+            name="Staff",
+            value=interaction.user.mention,
+            inline=True
+        )
+
+        log_embed.add_field(
+            name="Ticket",
+            value=interaction.channel.mention,
+            inline=True
+        )
+
+        await send_log(
+            interaction.guild,
+            log_embed
         )
 
     @discord.ui.button(
-        label="Reportar bug",
-        emoji="🐛",
+        label="Añadir usuario",
+        emoji="➕",
         style=discord.ButtonStyle.secondary,
-        custom_id="cn_ticket_bug"
+        custom_id="cn_ticket_add_user"
     )
-    async def bug(
+    async def add_user(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
+        if interaction.guild is None:
+            return
+
+        if not isinstance(
+            interaction.user,
+            discord.Member
+        ):
+            return
+
+        if not is_staff_or_admin(interaction.user):
+            await interaction.response.send_message(
+                "❌ Solo el staff puede añadir usuarios.",
+                ephemeral=True
+            )
+            return
 
         await interaction.response.send_modal(
-            TicketModal("bug")
+            AddUserModal()
         )
 
     @discord.ui.button(
-        label="Reportar usuario",
-        emoji="🚨",
+        label="Cerrar",
+        emoji="🔒",
         style=discord.ButtonStyle.danger,
-        custom_id="cn_ticket_reporte"
+        custom_id="cn_ticket_close"
     )
-    async def reporte(
+    async def close(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
+        if interaction.guild is None:
+            return
 
-        await interaction.response.send_modal(
-            TicketModal("reporte")
+        if not isinstance(
+            interaction.user,
+            discord.Member
+        ):
+            return
+
+        ticket = get_ticket(
+            interaction.channel.id
         )
 
-    @discord.ui.button(
-        label="Estafa",
-        emoji="💰",
-        style=discord.ButtonStyle.secondary,
-        custom_id="cn_ticket_estafa"
-    )
-    async def estafa(
-        self,
-        interaction,
-        button
-    ):
+        if not ticket:
+            await interaction.response.send_message(
+                "❌ Este canal no es un ticket.",
+                ephemeral=True
+            )
+            return
 
-        await interaction.response.send_modal(
-            TicketModal("estafa")
+        owner_id = ticket[2]
+        staff_id = ticket[4]
+
+        allowed = (
+            interaction.user.id == owner_id
+            or is_staff_or_admin(interaction.user)
+            or interaction.user.id == staff_id
         )
 
-    @discord.ui.button(
-        label="Postulación",
-        emoji="📋",
-        style=discord.ButtonStyle.success,
-        custom_id="cn_ticket_postulacion"
-    )
-    async def postulacion(
-        self,
-        interaction,
-        button
-    ):
+        if not allowed:
+            await interaction.response.send_message(
+                "❌ No tienes permiso para cerrar este ticket.",
+                ephemeral=True
+            )
+            return
 
-        await interaction.response.send_modal(
-            TicketModal("postulacion")
+        await interaction.response.send_message(
+            "⚠️ ¿Seguro que quieres cerrar este ticket?",
+            ephemeral=True,
+            view=CloseConfirmationView()
         )
 
 
-# ============================================================
-# CONFIRMACIÓN DE CIERRE
-# ============================================================
+# =========================================================
+# AÑADIR USUARIO
+# =========================================================
 
-class CloseConfirmView(discord.ui.View):
+class AddUserModal(discord.ui.Modal):
 
     def __init__(self):
-
         super().__init__(
-            timeout=60
+            title="Añadir usuario al ticket"
         )
+
+        self.user_id = discord.ui.TextInput(
+            label="ID del usuario",
+            placeholder="Ejemplo: 123456789012345678",
+            required=True,
+            min_length=17,
+            max_length=20
+        )
+
+        self.add_item(self.user_id)
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
+        if interaction.guild is None:
+            return
+
+        try:
+            user_id = int(self.user_id.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ El ID no es válido.",
+                ephemeral=True
+            )
+            return
+
+        member = interaction.guild.get_member(
+            user_id
+        )
+
+        if member is None:
+            try:
+                member = await interaction.guild.fetch_member(
+                    user_id
+                )
+            except discord.NotFound:
+                member = None
+
+        if member is None:
+            await interaction.response.send_message(
+                "❌ No encuentro ese usuario en el servidor.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.channel.set_permissions(
+                member,
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ No tengo permisos para añadirlo.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            f"✅ {member.mention} ha sido añadido al ticket."
+        )
+
+
+# =========================================================
+# CONFIRMACIÓN DE CIERRE
+# =========================================================
+
+class CloseConfirmationView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=30)
 
     @discord.ui.button(
         label="Sí, cerrar",
@@ -647,200 +984,1242 @@ class CloseConfirmView(discord.ui.View):
     )
     async def confirm(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
-
-        ticket = get_ticket(
-            interaction.channel.id
-        )
-
-        if not ticket:
-
-            await interaction.response.send_message(
-                "❌ Este canal no es un ticket.",
-                ephemeral=True
-            )
-
+        if interaction.guild is None:
             return
 
-        db = db_connect()
-        cursor = db.cursor()
+        channel = interaction.channel
 
-        cursor.execute("""
-            UPDATE tickets
-            SET closed_at = ?
-            WHERE channel_id = ?
-        """, (
-            utc_now(),
-            interaction.channel.id
-        ))
+        if not isinstance(
+            channel,
+            discord.TextChannel
+        ):
+            return
 
-        db.commit()
-        db.close()
+        ticket = get_ticket(channel.id)
 
-        await interaction.response.edit_message(
-            content="🔒 Cerrando ticket...",
-            embed=None,
-            view=None
+        if not ticket:
+            await interaction.response.send_message(
+                "❌ Ticket no encontrado.",
+                ephemeral=True
+            )
+            return
+
+        owner_id = ticket[2]
+        staff_id = ticket[4]
+
+        filename = await create_transcript(
+            channel
         )
 
-        await send_log(
-            interaction.guild,
-            "🔒 Ticket cerrado",
-            (
-                f"**Ticket:** #{ticket[0]}\n"
-                f"**Usuario:** <@{ticket[3]}>\n"
-                f"**Staff:** "
-                f"{f'<@{ticket[4]}>' if ticket[4] else 'Sin reclamar'}\n"
-                f"**Cerrado por:** {interaction.user.mention}"
-            ),
-            discord.Color.red()
+        close_ticket_database(
+            channel.id
         )
 
-        # ----------------------------------------------------
-        # VALORACIÓN
-        # ----------------------------------------------------
+        if filename and TRANSCRIPT_CHANNEL_ID != 0:
+            transcript_channel = interaction.guild.get_channel(
+                TRANSCRIPT_CHANNEL_ID
+            )
 
-        if RATINGS_CHANNEL_ID:
+            if transcript_channel:
+                try:
+                    await transcript_channel.send(
+                        content=(
+                            f"📁 Transcripción de `{channel.name}`"
+                        ),
+                        file=discord.File(filename)
+                    )
+                except discord.HTTPException:
+                    pass
 
+        if filename:
+            try:
+                os.remove(filename)
+            except OSError:
+                pass
+
+        if RATINGS_CHANNEL_ID != 0 and staff_id:
             rating_channel = interaction.guild.get_channel(
                 RATINGS_CHANNEL_ID
             )
 
             if rating_channel:
-
-                await rating_channel.send(
-                    embed=embed(
-                        "⭐ Valora la atención",
-                        (
-                            f"<@{ticket[3]}>\n\n"
-                            "Gracias por contactar con "
-                            "**Corruption Network**.\n\n"
-                            "¿Cómo valorarías la atención recibida?"
+                try:
+                    await rating_channel.send(
+                        content=(
+                            f"<@{owner_id}> tu ticket ha sido cerrado.\n"
+                            "⭐ Valora la atención recibida:"
                         ),
-                        discord.Color.gold()
-                    ),
-                    view=RatingView(
-                        ticket[0],
-                        ticket[4]
+                        view=RatingView(
+                            owner_id=owner_id,
+                            staff_id=staff_id,
+                            ticket_channel_id=channel.id
+                        )
                     )
-                )
+                except discord.HTTPException:
+                    pass
 
-        await create_transcript(
+        log_embed = discord.Embed(
+            title="🔒 Ticket cerrado",
+            color=COLOR_ERROR,
+            timestamp=datetime.utcnow()
+        )
+
+        log_embed.add_field(
+            name="Ticket",
+            value=channel.name,
+            inline=True
+        )
+
+        log_embed.add_field(
+            name="Usuario",
+            value=f"<@{owner_id}>",
+            inline=True
+        )
+
+        if staff_id:
+            log_embed.add_field(
+                name="Staff",
+                value=f"<@{staff_id}>",
+                inline=True
+            )
+
+        await send_log(
             interaction.guild,
-            ticket,
-            interaction.channel
+            log_embed
         )
 
-        await interaction.channel.delete(
-            reason="Ticket cerrado"
+        await interaction.response.send_message(
+            "🔒 Cerrando ticket..."
         )
+
+        await discord.utils.sleep_until(
+            datetime.now()
+        )
+
+        try:
+            await channel.delete(
+                reason="Ticket cerrado"
+            )
+        except discord.HTTPException:
+            pass
 
     @discord.ui.button(
         label="Cancelar",
-        emoji="↩️",
+        emoji="❌",
         style=discord.ButtonStyle.secondary
     )
     async def cancel(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
-
         await interaction.response.edit_message(
             content="❌ Cierre cancelado.",
-            embed=None,
             view=None
         )
 
 
-# ============================================================
-# CONTROL DEL TICKET
-# ============================================================
+# =========================================================
+# VALORACIONES
+# =========================================================
 
-class TicketControlView(discord.ui.View):
+class RatingView(discord.ui.View):
 
-    def __init__(self):
+    def __init__(
+        self,
+        owner_id: int,
+        staff_id: int,
+        ticket_channel_id: int
+    ):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
+        self.owner_id = owner_id
+        self.staff_id = staff_id
+        self.ticket_channel_id = ticket_channel_id
+
+    async def register_rating(
+        self,
+        interaction: discord.Interaction,
+        rating: int
+    ):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ Esta valoración pertenece al usuario del ticket.",
+                ephemeral=True
+            )
+            return
+
+        conn = db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id
+            FROM ratings
+            WHERE ticket_channel_id = ?
+        """, (self.ticket_channel_id,))
+
+        existing = cursor.fetchone()
+
+        if existing:
+            conn.close()
+
+            await interaction.response.send_message(
+                "❌ Este ticket ya ha sido valorado.",
+                ephemeral=True
+            )
+            return
+
+        cursor.execute("""
+            INSERT INTO ratings
+            (
+                guild_id,
+                ticket_channel_id,
+                user_id,
+                staff_id,
+                rating,
+                comment,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            interaction.guild.id,
+            self.ticket_channel_id,
+            self.owner_id,
+            self.staff_id,
+            rating,
+            "",
+            now()
+        ))
+
+        conn.commit()
+        conn.close()
+
+        await interaction.response.send_message(
+            f"⭐ Gracias por valorar la atención con **{rating}/5**.",
+            ephemeral=True
+        )
+
+        if interaction.channel:
+            try:
+                embed = discord.Embed(
+                    title="⭐ Nueva valoración",
+                    color=COLOR_SUCCESS,
+                    timestamp=datetime.utcnow()
+                )
+
+                embed.add_field(
+                    name="Usuario",
+                    value=f"<@{self.owner_id}>",
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="Staff",
+                    value=f"<@{self.staff_id}>",
+                    inline=True
+                )
+
+                embed.add_field(
+                    name="Valoración",
+                    value=f"{rating}/5",
+                    inline=True
+                )
+
+                await interaction.channel.send(
+                    embed=embed
+                )
+            except discord.HTTPException:
+                pass
+
+    @discord.ui.button(
+        label="1",
+        style=discord.ButtonStyle.danger,
+        custom_id="cn_rating_1"
+    )
+    async def rating_1(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.register_rating(
+            interaction,
+            1
         )
 
     @discord.ui.button(
-        label="Reclamar",
-        emoji="🙋",
-        style=discord.ButtonStyle.success,
-        custom_id="cn_ticket_claim"
+        label="2",
+        style=discord.ButtonStyle.danger,
+        custom_id="cn_rating_2"
     )
-    async def claim(
+    async def rating_2(
         self,
-        interaction,
-        button
+        interaction: discord.Interaction,
+        button: discord.ui.Button
     ):
-
-        if not is_staff(interaction.user):
-
-            await interaction.response.send_message(
-                "❌ Solo el staff puede reclamar tickets.",
-                ephemeral=True
-            )
-
-            return
-
-        ticket = get_ticket(
-            interaction.channel.id
+        await self.register_rating(
+            interaction,
+            2
         )
 
-        if not ticket:
+    @discord.ui.button(
+        label="3",
+        style=discord.ButtonStyle.secondary,
+        custom_id="cn_rating_3"
+    )
+    async def rating_3(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.register_rating(
+            interaction,
+            3
+        )
 
-            await interaction.response.send_message(
-                "❌ Este canal no es un ticket.",
-                ephemeral=True
+    @discord.ui.button(
+        label="4",
+        style=discord.ButtonStyle.success,
+        custom_id="cn_rating_4"
+    )
+    async def rating_4(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.register_rating(
+            interaction,
+            4
+        )
+
+    @discord.ui.button(
+        label="5",
+        style=discord.ButtonStyle.success,
+        custom_id="cn_rating_5"
+    )
+    async def rating_5(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.register_rating(
+            interaction,
+            5
+        )
+
+
+# =========================================================
+# EVENTO READY
+# =========================================================
+
+@bot.event
+async def on_ready():
+    print("=" * 60)
+    print("CORRUPTION NETWORK BOT")
+    print("=" * 60)
+    print(f"Bot: {bot.user}")
+    print(f"ID: {bot.user.id}")
+    print("=" * 60)
+
+    bot.add_view(
+        TicketPanelView()
+    )
+
+    bot.add_view(
+        TicketControlView()
+    )
+
+    if GUILD_ID:
+        guild = discord.Object(
+            id=GUILD_ID
+        )
+
+        try:
+            synced = await bot.tree.sync(
+                guild=guild
             )
 
-            return
+            print(
+                f"Comandos sincronizados: {len(synced)}"
+            )
+        except Exception as error:
+            print(
+                f"Error sincronizando comandos: {error}"
+            )
+    else:
+        try:
+            synced = await bot.tree.sync()
 
-        if ticket[4]:
-
-            await interaction.response.send_message(
-                f"❌ Este ticket ya ha sido reclamado por "
-                f"<@{ticket[4]}>.",
-                ephemeral=True
+            print(
+                f"Comandos globales sincronizados: {len(synced)}"
+            )
+        except Exception as error:
+            print(
+                f"Error sincronizando comandos globales: {error}"
             )
 
-            return
+    print("Bot conectado correctamente.")
 
-        db = db_connect()
-        cursor = db.cursor()
 
-        cursor.execute("""
-            UPDATE tickets
-            SET staff_id = ?
-            WHERE channel_id = ?
-        """, (
-            interaction.user.id,
-            interaction.channel.id
-        ))
+# =========================================================
+# COMANDO TICKET PANEL
+# =========================================================
 
-        db.commit()
-        db.close()
+@bot.tree.command(
+    name="ticketpanel",
+    description="Envía el panel profesional de tickets."
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def ticketpanel(
+    interaction: discord.Interaction
+):
+    embed = discord.Embed(
+        title="🎫 CORRUPTION NETWORK • SOPORTE",
+        description=(
+            "¿Necesitas ayuda?\n\n"
+            "Selecciona la categoría que corresponda "
+            "a tu solicitud utilizando los botones de abajo.\n\n"
+            "🎫 **Soporte**\n"
+            "Para dudas o problemas generales.\n\n"
+            "🐛 **Reportar bug**\n"
+            "Para informar de errores del servidor.\n\n"
+            "🚨 **Reportar usuario**\n"
+            "Para reportar comportamientos indebidos.\n\n"
+            "💰 **Estafa**\n"
+            "Para problemas relacionados con estafas.\n\n"
+            "📋 **Postulación**\n"
+            "Para solicitar formar parte del equipo."
+        ),
+        color=COLOR_MAIN,
+        timestamp=datetime.utcnow()
+    )
 
+    embed.set_footer(
+        text="Corruption Network • Atención al usuario"
+    )
+
+    if interaction.guild:
+        embed.set_thumbnail(
+            url=interaction.guild.icon.url
+            if interaction.guild.icon
+            else discord.Embed.Empty
+        )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+    message = await interaction.original_response()
+
+    await message.edit(
+        view=TicketPanelView()
+    )
+
+
+# =========================================================
+# BAN
+# =========================================================
+
+@bot.tree.command(
+    name="ban",
+    description="Banea a un usuario."
+)
+@app_commands.checks.has_permissions(
+    ban_members=True
+)
+async def ban(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "Sin especificar"
+):
+    if member == interaction.user:
         await interaction.response.send_message(
-            embed=embed(
-                "🙋 Ticket reclamado",
-                (
-                    f"Este ticket está siendo atendido por "
-                    f"{interaction.user.mention}.\n\n"
-                    "El miembro del staff que ha reclamado "
-                    "el ticket queda registrado."
-                ),
-                discord.Color.green()
+            "❌ No puedes banearte a ti mismo.",
+            ephemeral=True
+        )
+        return
+
+    if interaction.guild:
+        if (
+            member.top_role >= interaction.user.top_role
+            and interaction.user.id != interaction.guild.owner_id
+        ):
+            await interaction.response.send_message(
+                "❌ No puedes moderar a un usuario con un rol igual o superior.",
+                ephemeral=True
             )
+            return
+
+    try:
+        await member.ban(
+            reason=reason
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo banear a ese usuario.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"🔨 {member.mention} ha sido baneado.\n"
+        f"**Razón:** {reason}"
+    )
+
+    if interaction.guild:
+        embed = discord.Embed(
+            title="🔨 Usuario baneado",
+            color=COLOR_ERROR,
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(
+            name="Usuario",
+            value=f"{member} (`{member.id}`)",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Moderador",
+            value=interaction.user.mention,
+            inline=True
+        )
+
+        embed.add_field(
+            name="Razón",
+            value=reason,
+            inline=True
         )
 
         await send_log(
             interaction.guild,
-            "🙋 Ticket reclamado",
-            (
-                f"**Ticket:** {interaction.chan
+            embed
+        )
+
+
+# =========================================================
+# UNBAN
+# =========================================================
+
+@bot.tree.command(
+    name="unban",
+    description="Desbanea a un usuario mediante su ID."
+)
+@app_commands.checks.has_permissions(
+    ban_members=True
+)
+async def unban(
+    interaction: discord.Interaction,
+    user_id: str
+):
+    try:
+        user = await bot.fetch_user(
+            int(user_id)
+        )
+    except (ValueError, discord.NotFound):
+        await interaction.response.send_message(
+            "❌ ID de usuario inválido.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await interaction.guild.unban(
+            user
+        )
+    except discord.NotFound:
+        await interaction.response.send_message(
+            "❌ Ese usuario no está baneado.",
+            ephemeral=True
+        )
+        return
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No tengo permisos para quitar ese baneo.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"✅ **{user}** ha sido desbaneado."
+    )
+
+
+# =========================================================
+# KICK
+# =========================================================
+
+@bot.tree.command(
+    name="kick",
+    description="Expulsa a un usuario."
+)
+@app_commands.checks.has_permissions(
+    kick_members=True
+)
+async def kick(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "Sin especificar"
+):
+    if interaction.guild:
+        if (
+            member.top_role >= interaction.user.top_role
+            and interaction.user.id != interaction.guild.owner_id
+        ):
+            await interaction.response.send_message(
+                "❌ No puedes expulsar a ese usuario.",
+                ephemeral=True
+            )
+            return
+
+    try:
+        await member.kick(
+            reason=reason
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo expulsar a ese usuario.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"👢 {member} ha sido expulsado.\n"
+        f"**Razón:** {reason}"
+    )
+
+
+# =========================================================
+# TIMEOUT
+# =========================================================
+
+@bot.tree.command(
+    name="timeout",
+    description="Silencia temporalmente a un usuario."
+)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
+async def timeout(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    minutos: int,
+    reason: str = "Sin especificar"
+):
+    if minutos < 1:
+        await interaction.response.send_message(
+            "❌ El tiempo debe ser de al menos 1 minuto.",
+            ephemeral=True
+        )
+        return
+
+    if minutos > 40320:
+        await interaction.response.send_message(
+            "❌ El máximo es 28 días.",
+            ephemeral=True
+        )
+        return
+
+    if interaction.guild:
+        if (
+            member.top_role >= interaction.user.top_role
+            and interaction.user.id != interaction.guild.owner_id
+        ):
+            await interaction.response.send_message(
+                "❌ No puedes aplicar timeout a ese usuario.",
+                ephemeral=True
+            )
+            return
+
+    try:
+        await member.timeout(
+            timedelta(minutes=minutos),
+            reason=reason
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo aplicar timeout a ese usuario.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"⏱️ {member.mention} ha recibido un timeout de "
+        f"**{minutos} minutos**.\n"
+        f"**Razón:** {reason}"
+    )
+
+
+# =========================================================
+# UNTIMEOUT
+# =========================================================
+
+@bot.tree.command(
+    name="untimeout",
+    description="Quita el timeout a un usuario."
+)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
+async def untimeout(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    try:
+        await member.timeout(
+            None,
+            reason=f"Timeout retirado por {interaction.user}"
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ No puedo quitar el timeout.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"✅ Timeout retirado a {member.mention}."
+    )
+
+
+# =========================================================
+# CLEAR
+# =========================================================
+
+@bot.tree.command(
+    name="clear",
+    description="Elimina mensajes del canal."
+)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
+async def clear(
+    interaction: discord.Interaction,
+    cantidad: app_commands.Range[int, 1, 100]
+):
+    await interaction.response.defer(
+        ephemeral=True
+    )
+
+    if not isinstance(
+        interaction.channel,
+        discord.TextChannel
+    ):
+        await interaction.followup.send(
+            "❌ Este comando solo funciona en canales de texto.",
+            ephemeral=True
+        )
+        return
+
+    deleted = await interaction.channel.purge(
+        limit=cantidad
+    )
+
+    await interaction.followup.send(
+        f"🧹 Se han eliminado **{len(deleted)} mensajes**.",
+        ephemeral=True
+    )
+
+
+# =========================================================
+# WARN
+# =========================================================
+
+@bot.tree.command(
+    name="warn",
+    description="Añade una advertencia a un usuario."
+)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
+async def warn(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "Sin especificar"
+):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO warnings
+        (
+            guild_id,
+            user_id,
+            moderator_id,
+            reason,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        interaction.guild.id,
+        member.id,
+        interaction.user.id,
+        reason,
+        now()
+    ))
+
+    conn.commit()
+    conn.close()
+
+    await interaction.response.send_message(
+        f"⚠️ {member.mention} ha recibido una advertencia.\n"
+        f"**Razón:** {reason}"
+    )
+
+
+# =========================================================
+# WARNINGS
+# =========================================================
+
+@bot.tree.command(
+    name="warnings",
+    description="Muestra las advertencias de un usuario."
+)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
+async def warnings(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT moderator_id, reason, created_at
+        FROM warnings
+        WHERE guild_id = ?
+        AND user_id = ?
+        ORDER BY id DESC
+    """, (
+        interaction.guild.id,
+        member.id
+    ))
+
+    rows = cursor.fetchall()
+
+    conn.close()
+
+    if not rows:
+        await interaction.response.send_message(
+            f"✅ {member.mention} no tiene advertencias.",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        title=f"⚠️ Advertencias de {member}",
+        color=COLOR_WARNING
+    )
+
+    for index, row in enumerate(rows, start=1):
+        moderator_id, reason, created_at = row
+
+        embed.add_field(
+            name=f"Advertencia #{index}",
+            value=(
+                f"**Razón:** {reason}\n"
+                f"**Moderador:** <@{moderator_id}>\n"
+                f"**Fecha:** {created_at}"
+            ),
+            inline=False
+        )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+
+# =========================================================
+# LOCK
+# =========================================================
+
+@bot.tree.command(
+    name="lock",
+    description="Bloquea el canal."
+)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
+async def lock(
+    interaction: discord.Interaction
+):
+    channel = interaction.channel
+
+    if not isinstance(
+        channel,
+        discord.TextChannel
+    ):
+        await interaction.response.send_message(
+            "❌ Este comando solo funciona en canales de texto.",
+            ephemeral=True
+        )
+        return
+
+    await channel.set_permissions(
+        interaction.guild.default_role,
+        send_messages=False
+    )
+
+    await interaction.response.send_message(
+        "🔒 Canal bloqueado."
+    )
+
+
+# =========================================================
+# UNLOCK
+# =========================================================
+
+@bot.tree.command(
+    name="unlock",
+    description="Desbloquea el canal."
+)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
+async def unlock(
+    interaction: discord.Interaction
+):
+    channel = interaction.channel
+
+    if not isinstance(
+        channel,
+        discord.TextChannel
+    ):
+        await interaction.response.send_message(
+            "❌ Este comando solo funciona en canales de texto.",
+            ephemeral=True
+        )
+        return
+
+    await channel.set_permissions(
+        interaction.guild.default_role,
+        send_messages=None
+    )
+
+    await interaction.response.send_message(
+        "🔓 Canal desbloqueado."
+    )
+
+
+# =========================================================
+# SLOWMODE
+# =========================================================
+
+@bot.tree.command(
+    name="slowmode",
+    description="Configura el modo lento del canal."
+)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
+async def slowmode(
+    interaction: discord.Interaction,
+    segundos: app_commands.Range[int, 0, 21600]
+):
+    channel = interaction.channel
+
+    if not isinstance(
+        channel,
+        discord.TextChannel
+    ):
+        await interaction.response.send_message(
+            "❌ Este comando solo funciona en canales de texto.",
+            ephemeral=True
+        )
+        return
+
+    await channel.edit(
+        slowmode_delay=segundos
+    )
+
+    if segundos == 0:
+        await interaction.response.send_message(
+            "🐌 Modo lento desactivado."
+        )
+    else:
+        await interaction.response.send_message(
+            f"🐌 Modo lento configurado a **{segundos} segundos**."
+        )
+
+
+# =========================================================
+# USERINFO
+# =========================================================
+
+@bot.tree.command(
+    name="userinfo",
+    description="Muestra información de un usuario."
+)
+async def userinfo(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    embed = discord.Embed(
+        title="👤 Información del usuario",
+        color=COLOR_INFO
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.add_field(
+        name="Usuario",
+        value=str(member),
+        inline=True
+    )
+
+    embed.add_field(
+        name="ID",
+        value=str(member.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Mención",
+        value=member.mention,
+        inline=True
+    )
+
+    embed.add_field(
+        name="Cuenta creada",
+        value=discord.utils.format_dt(
+            member.created_at,
+            style="F"
+        ),
+        inline=False
+    )
+
+    if member.joined_at:
+        embed.add_field(
+            name="Entró al servidor",
+            value=discord.utils.format_dt(
+                member.joined_at,
+                style="F"
+            ),
+            inline=False
+        )
+
+    roles = [
+        role.mention
+        for role in member.roles
+        if role != interaction.guild.default_role
+    ]
+
+    embed.add_field(
+        name="Roles",
+        value=", ".join(roles)
+        if roles
+        else "Sin roles",
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# SERVERINFO
+# =========================================================
+
+@bot.tree.command(
+    name="serverinfo",
+    description="Muestra información del servidor de Discord."
+)
+async def serverinfo(
+    interaction: discord.Interaction
+):
+    guild = interaction.guild
+
+    if guild is None:
+        return
+
+    embed = discord.Embed(
+        title=f"🏠 {guild.name}",
+        color=COLOR_MAIN
+    )
+
+    if guild.icon:
+        embed.set_thumbnail(
+            url=guild.icon.url
+        )
+
+    embed.add_field(
+        name="ID",
+        value=str(guild.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Miembros",
+        value=str(guild.member_count),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Canales",
+        value=str(len(guild.channels)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Roles",
+        value=str(len(guild.roles)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Creado",
+        value=discord.utils.format_dt(
+            guild.created_at,
+            style="F"
+        ),
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# STAFF STATS
+# =========================================================
+
+@bot.tree.command(
+    name="staffstats",
+    description="Muestra las estadísticas de atención de un miembro del staff."
+)
+@app_commands.checks.has_permissions(
+    manage_guild=True
+)
+async def staffstats(
+    interaction: discord.Interaction,
+    member: discord.Member
+):
+    conn = db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*), AVG(rating)
+        FROM ratings
+        WHERE guild_id = ?
+        AND staff_id = ?
+    """, (
+        interaction.guild.id,
+        member.id
+    ))
+
+    total, average = cursor.fetchone()
+
+    conn.close()
+
+    total = total or 0
+    average = average or 0
+
+    embed = discord.Embed(
+        title="📊 Estadísticas del Staff",
+        color=COLOR_INFO
+    )
+
+    embed.set_thumbnail(
+        url=member.display_avatar.url
+    )
+
+    embed.add_field(
+        name="Staff",
+        value=member.mention,
+        inline=True
+    )
+
+    embed.add_field(
+        name="Valoraciones",
+        value=str(total),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Media",
+        value=f"{average:.2f}/5",
+        inline=True
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+# =========================================================
+# MANEJO DE ERRORES
+# =========================================================
+
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError
+):
+    if isinstance(
+        error,
+        app_commands.errors.MissingPermissions
+    ):
+        message = (
+            "❌ No tienes permisos para utilizar este comando."
+        )
+
+    elif isinstance(
+        error,
+        app_commands.errors.MissingRole
+    ):
+        message = (
+            "❌ No tienes el rol necesario para utilizar este comando."
+        )
+
+    elif isinstance(
+        error,
+        app_commands.errors.CheckFailure
+    ):
+        message = (
+            "❌ No tienes permisos para utilizar este comando."
+        )
+
+    else:
+        print(
+            f"ERROR DE COMANDO: {repr(error)}"
+        )
+
+        message = (
+            "❌ Ha ocurrido un error al ejecutar el comando."
+        )
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                message,
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                message,
+                ephemeral=True
+            )
+    except discord.HTTPException:
+        pass
+
+
+# =========================================================
+# ARRANQUE
+# =========================================================
+
+if not TOKEN:
+    raise RuntimeError(
+        "Falta la variable DISCORD_TOKEN en Railway."
+    )
+
+bot.run(TOKEN)
