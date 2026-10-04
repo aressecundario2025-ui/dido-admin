@@ -1,15 +1,13 @@
 import os
 import io
 import re
-import random
 import sqlite3
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
 from discord import app_commands
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
 # ============================================================
@@ -20,16 +18,39 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 
 GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-TICKET_PANEL_CHANNEL_ID = int(os.getenv("TICKET_PANEL_CHANNEL_ID", "0"))
-TICKET_CATEGORY_ID = int(os.getenv("TICKET_CATEGORY_ID", "0"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-RATINGS_CHANNEL_ID = int(os.getenv("RATINGS_CHANNEL_ID", "0"))
-TRANSCRIPT_CHANNEL_ID = int(os.getenv("TRANSCRIPT_CHANNEL_ID", "0"))
+TICKET_PANEL_CHANNEL_ID = int(
+    os.getenv("TICKET_PANEL_CHANNEL_ID", "0")
+)
 
-STAFF_ROLE_ID = int(os.getenv("STAFF_ROLE_ID", "0"))
-ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID", "0"))
+TICKET_CATEGORY_ID = int(
+    os.getenv("TICKET_CATEGORY_ID", "0")
+)
 
+LOG_CHANNEL_ID = int(
+    os.getenv("LOG_CHANNEL_ID", "0")
+)
+
+RATINGS_CHANNEL_ID = int(
+    os.getenv("RATINGS_CHANNEL_ID", "0")
+)
+
+TRANSCRIPT_CHANNEL_ID = int(
+    os.getenv("TRANSCRIPT_CHANNEL_ID", "0")
+)
+
+STAFF_ROLE_ID = int(
+    os.getenv("STAFF_ROLE_ID", "0")
+)
+
+ADMIN_ROLE_ID = int(
+    os.getenv("ADMIN_ROLE_ID", "0")
+)
+
+
+# ============================================================
 # VERIFICACIÓN
+# ============================================================
+
 VERIFICATION_CHANNEL_ID = 1555632348907708508
 MEMBER_ROLE_ID = 1556321345145667708
 
@@ -78,7 +99,7 @@ db.commit()
 
 
 # ============================================================
-# INTENTS
+# BOT
 # ============================================================
 
 intents = discord.Intents.default()
@@ -100,41 +121,53 @@ def now():
 
 
 def is_staff(member: discord.Member):
+
     if member.guild_permissions.administrator:
         return True
 
-    if STAFF_ROLE_ID and any(
-        role.id == STAFF_ROLE_ID for role in member.roles
-    ):
-        return True
+    if STAFF_ROLE_ID:
+        if any(
+            role.id == STAFF_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
-    if ADMIN_ROLE_ID and any(
-        role.id == ADMIN_ROLE_ID for role in member.roles
-    ):
-        return True
+    if ADMIN_ROLE_ID:
+        if any(
+            role.id == ADMIN_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
     return False
 
 
 def is_admin(member: discord.Member):
+
     if member.guild_permissions.administrator:
         return True
 
-    if ADMIN_ROLE_ID and any(
-        role.id == ADMIN_ROLE_ID for role in member.roles
-    ):
-        return True
+    if ADMIN_ROLE_ID:
+        if any(
+            role.id == ADMIN_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
     return False
 
 
 async def send_log(message):
+
     if not LOG_CHANNEL_ID:
         return
 
-    channel = bot.get_channel(LOG_CHANNEL_ID)
+    channel = bot.get_channel(
+        LOG_CHANNEL_ID
+    )
 
     if channel:
+
         try:
             await channel.send(message)
         except Exception:
@@ -142,186 +175,45 @@ async def send_log(message):
 
 
 # ============================================================
-# CAPTCHA
+# VERIFICACIÓN
 # ============================================================
 
-captcha_storage = {}
+class VerificationView(discord.ui.View):
 
-
-def generate_captcha_code(length=4):
-    """
-    CAPTCHA fácil:
-    - 4 caracteres
-    - Sin O/0
-    - Sin I/1
-    - Sin S/5
-    """
-
-    characters = "ABCDEFGHJKLMNPQRTUVWXYZ2346789"
-
-    return "".join(
-        random.choice(characters)
-        for _ in range(length)
-    )
-
-
-def create_captcha_image(code):
-
-    width = 600
-    height = 220
-
-    image = Image.new(
-        "RGB",
-        (width, height),
-        (245, 245, 245)
-    )
-
-    draw = ImageDraw.Draw(image)
-
-    # Fondo con pequeños puntos
-    for _ in range(120):
-        x = random.randint(0, width)
-        y = random.randint(0, height)
-
-        draw.ellipse(
-            (x, y, x + 2, y + 2),
-            fill=(190, 190, 190)
+    def __init__(self):
+        super().__init__(
+            timeout=None
         )
 
-    # Líneas suaves
-    for _ in range(5):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-
-        x2 = random.randint(0, width)
-        y2 = random.randint(0, height)
-
-        draw.line(
-            (x1, y1, x2, y2),
-            fill=(150, 150, 150),
-            width=2
-        )
-
-    # Fuente
-    try:
-        font = ImageFont.truetype(
-            "DejaVuSans-Bold.ttf",
-            82
-        )
-    except Exception:
-        font = ImageFont.load_default()
-
-    # Dibujar caracteres separados
-    total_width = 0
-    char_widths = []
-
-    for char in code:
-        bbox = draw.textbbox(
-            (0, 0),
-            char,
-            font=font
-        )
-
-        char_width = bbox[2] - bbox[0]
-
-        char_widths.append(char_width)
-        total_width += char_width
-
-    spacing = 15
-    total_width += spacing * (len(code) - 1)
-
-    x = (width - total_width) // 2
-
-    for index, char in enumerate(code):
-
-        y = random.randint(65, 90)
-
-        draw.text(
-            (x, y),
-            char,
-            font=font,
-            fill=(30, 30, 30)
-        )
-
-        x += char_widths[index] + spacing
-
-    image = image.filter(
-        ImageFilter.GaussianBlur(radius=0.3)
+    @discord.ui.button(
+        label="Verificarme",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="corruption_verify"
     )
-
-    output = io.BytesIO()
-
-    image.save(
-        output,
-        format="PNG"
-    )
-
-    output.seek(0)
-
-    return output
-
-
-class CaptchaModal(discord.ui.Modal, title="Introducir CAPTCHA"):
-
-    captcha = discord.ui.TextInput(
-        label="Escribe el código de la imagen",
-        placeholder="Ejemplo: K7P4",
-        min_length=4,
-        max_length=4,
-        required=True
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-
-        user_id = interaction.user.id
-
-        data = captcha_storage.get(user_id)
-
-        if not data:
-            await interaction.response.send_message(
-                "❌ Tu CAPTCHA ha caducado. Pulsa **Verificarme** otra vez.",
-                ephemeral=True
-            )
-            return
-
-        code = data["code"]
-        expires = data["expires"]
-
-        if datetime.now(timezone.utc) > expires:
-
-            captcha_storage.pop(user_id, None)
-
-            await interaction.response.send_message(
-                "⏰ El CAPTCHA ha caducado. Pulsa **Verificarme** otra vez.",
-                ephemeral=True
-            )
-
-            return
-
-        if self.captcha.value.upper().strip() != code:
-
-            await interaction.response.send_message(
-                "❌ CAPTCHA incorrecto. Inténtalo de nuevo.",
-                ephemeral=True
-            )
-
-            return
+    async def verify(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
         guild = interaction.guild
 
         if not guild:
 
             await interaction.response.send_message(
-                "❌ No se ha podido encontrar el servidor.",
+                "❌ No se ha encontrado el servidor.",
                 ephemeral=True
             )
 
             return
 
         try:
+
             member = await guild.fetch_member(
                 interaction.user.id
             )
+
         except Exception:
 
             await interaction.response.send_message(
@@ -338,18 +230,13 @@ class CaptchaModal(discord.ui.Modal, title="Introducir CAPTCHA"):
         if not role:
 
             await interaction.response.send_message(
-                "❌ No encuentro el rol de miembro.",
+                "❌ No encuentro el rol **Miembro**.",
                 ephemeral=True
             )
 
             return
 
         if role in member.roles:
-
-            captcha_storage.pop(
-                user_id,
-                None
-            )
 
             await interaction.response.send_message(
                 "✅ Ya estás verificado.",
@@ -362,13 +249,15 @@ class CaptchaModal(discord.ui.Modal, title="Introducir CAPTCHA"):
 
             await member.add_roles(
                 role,
-                reason="Verificación CAPTCHA"
+                reason="Verificación mediante botón"
             )
 
         except discord.Forbidden:
 
             await interaction.response.send_message(
-                "❌ No puedo darte el rol. Asegúrate de que mi rol esté **por encima de Miembro**.",
+                "❌ No puedo darte el rol **Miembro**.\n\n"
+                "Asegúrate de que el rol del bot esté "
+                "**por encima del rol Miembro**.",
                 ephemeral=True
             )
 
@@ -377,103 +266,27 @@ class CaptchaModal(discord.ui.Modal, title="Introducir CAPTCHA"):
         except Exception as e:
 
             print(
-                f"Error dando rol: {e}"
+                f"Error dando rol de verificación: {e}"
             )
 
             await interaction.response.send_message(
-                "❌ Ha ocurrido un error al darte el rol.",
+                "❌ Ha ocurrido un error al verificarte.",
                 ephemeral=True
             )
 
             return
 
-        captcha_storage.pop(
-            user_id,
-            None
-        )
-
         await interaction.response.send_message(
-            "🎉 **Verificación completada correctamente.**\n"
-            "Ya tienes acceso al servidor.",
+            "🎉 **¡Verificación completada!**\n\n"
+            "Ya tienes el rol **Miembro** y puedes acceder "
+            "a las zonas correspondientes del servidor.",
             ephemeral=True
         )
 
-
-class CaptchaInputView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=180)
-
-    @discord.ui.button(
-        label="Introducir CAPTCHA",
-        style=discord.ButtonStyle.primary,
-        emoji="🔑"
-    )
-    async def enter_captcha(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        await interaction.response.send_modal(
-            CaptchaModal()
-        )
-
-
-class VerificationView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Verificarme",
-        style=discord.ButtonStyle.success,
-        emoji="✅",
-        custom_id="corruption_verify"
-    )
-    async def verify(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-
-        user_id = interaction.user.id
-
-        code = generate_captcha_code()
-
-        captcha_storage[user_id] = {
-            "code": code,
-            "expires": datetime.now(timezone.utc) + timedelta(minutes=3)
-        }
-
-        image = create_captcha_image(
-            code
-        )
-
-        file = discord.File(
-            image,
-            filename="captcha.png"
-        )
-
-        embed = discord.Embed(
-            title="🔐 Verificación",
-            description=(
-                "Para verificarte, escribe exactamente "
-                "los **4 caracteres** que aparecen en la imagen.\n\n"
-                "⏱️ Tienes **3 minutos**."
-            ),
-            color=discord.Color.blue()
-        )
-
-        embed.set_image(
-            url="attachment://captcha.png"
-        )
-
-        await interaction.response.send_message(
-            embed=embed,
-            file=file,
-            view=CaptchaInputView(),
-            ephemeral=True
+        await send_log(
+            f"✅ **Usuario verificado**\n"
+            f"Usuario: {member.mention}\n"
+            f"ID: `{member.id}`"
         )
 
 
@@ -484,21 +297,180 @@ async def send_verification_panel(channel):
         description=(
             "Bienvenido a **Corruption Network**.\n\n"
             "Para acceder al servidor debes verificarte.\n\n"
-            "Pulsa el botón **✅ Verificarme** y completa "
-            "el pequeño CAPTCHA que aparecerá.\n\n"
-            "🔐 La verificación es rápida y automática."
+            "Pulsa el botón **✅ Verificarme** "
+            "y recibirás automáticamente el rol "
+            "**Miembro**.\n\n"
+            "⚡ Sin CAPTCHA y sin complicaciones."
         ),
         color=discord.Color.blue()
     )
 
     embed.set_footer(
-        text="Corruption Network • Sistema de verificación"
+        text="Corruption Network • Verificación"
     )
 
     await channel.send(
         embed=embed,
         view=VerificationView()
     )
+
+
+# ============================================================
+# ROLES JAVA / BEDROCK
+# ============================================================
+
+async def get_or_create_platform_roles(guild):
+
+    java_role = discord.utils.get(
+        guild.roles,
+        name="JAVA"
+    )
+
+    bedrock_role = discord.utils.get(
+        guild.roles,
+        name="BEDROCK"
+    )
+
+    if not java_role:
+
+        java_role = await guild.create_role(
+            name="JAVA",
+            reason="Rol de plataforma Corruption Network"
+        )
+
+    if not bedrock_role:
+
+        bedrock_role = await guild.create_role(
+            name="BEDROCK",
+            reason="Rol de plataforma Corruption Network"
+        )
+
+    return java_role, bedrock_role
+
+
+class PlatformView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(
+            timeout=None
+        )
+
+    async def give_platform_role(
+        self,
+        interaction,
+        platform
+    ):
+
+        guild = interaction.guild
+
+        if not guild:
+
+            await interaction.response.send_message(
+                "❌ No se ha encontrado el servidor.",
+                ephemeral=True
+            )
+
+            return
+
+        java_role, bedrock_role = (
+            await get_or_create_platform_roles(guild)
+        )
+
+        if platform == "JAVA":
+
+            selected_role = java_role
+            other_role = bedrock_role
+            emoji = "☕"
+
+        else:
+
+            selected_role = bedrock_role
+            other_role = java_role
+            emoji = "📱"
+
+        try:
+
+            if other_role in interaction.user.roles:
+
+                await interaction.user.remove_roles(
+                    other_role,
+                    reason="Cambio de plataforma"
+                )
+
+            if selected_role in interaction.user.roles:
+
+                await interaction.response.send_message(
+                    f"✅ Ya tienes el rol **{platform}**.",
+                    ephemeral=True
+                )
+
+                return
+
+            await interaction.user.add_roles(
+                selected_role,
+                reason=f"Selección de plataforma {platform}"
+            )
+
+            await interaction.response.send_message(
+                f"{emoji} Has seleccionado **{platform}** correctamente.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ No puedo asignar el rol.\n\n"
+                "Pon los roles **JAVA** y **BEDROCK** "
+                "por debajo del rol del bot.",
+                ephemeral=True
+            )
+
+        except Exception as e:
+
+            print(
+                f"Error asignando plataforma: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ Ha ocurrido un error.",
+                ephemeral=True
+            )
+
+
+    @discord.ui.button(
+        label="JAVA",
+        emoji="☕",
+        style=discord.ButtonStyle.primary,
+        custom_id="platform_java"
+    )
+    async def java(
+        self,
+        interaction,
+        button
+    ):
+
+        await self.give_platform_role(
+            interaction,
+            "JAVA"
+        )
+
+
+    @discord.ui.button(
+        label="BEDROCK",
+        emoji="📱",
+        style=discord.ButtonStyle.success,
+        custom_id="platform_bedrock"
+    )
+    async def bedrock(
+        self,
+        interaction,
+        button
+    ):
+
+        await self.give_platform_role(
+            interaction,
+            "BEDROCK"
+        )
 
 
 # ============================================================
@@ -529,7 +501,7 @@ class TicketModal(discord.ui.Modal):
 
     async def on_submit(
         self,
-        interaction: discord.Interaction
+        interaction
     ):
 
         guild = interaction.guild
@@ -546,6 +518,7 @@ class TicketModal(discord.ui.Modal):
         category = None
 
         if TICKET_CATEGORY_ID:
+
             category = guild.get_channel(
                 TICKET_CATEGORY_ID
             )
@@ -593,11 +566,13 @@ class TicketModal(discord.ui.Modal):
 
             if staff_role:
 
-                overwrites[staff_role] = discord.PermissionOverwrite(
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True,
-                    manage_messages=True
+                overwrites[staff_role] = (
+                    discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True,
+                        manage_messages=True
+                    )
                 )
 
         channel = await guild.create_text_channel(
@@ -610,7 +585,8 @@ class TicketModal(discord.ui.Modal):
         cursor.execute(
             """
             INSERT INTO tickets
-            (channel_id, user_id, ticket_type, claimed_by, created_at)
+            (channel_id, user_id, ticket_type,
+             claimed_by, created_at)
             VALUES (?, ?, ?, ?, ?)
             """,
             (
@@ -632,8 +608,8 @@ class TicketModal(discord.ui.Modal):
                 f"Bienvenido {interaction.user.mention}.\n\n"
                 f"**Motivo:**\n"
                 f"{self.reason.value}\n\n"
-                "Un miembro del equipo atenderá tu ticket "
-                "lo antes posible."
+                "Un miembro del equipo atenderá "
+                "tu ticket lo antes posible."
             ),
             color=discord.Color.blurple()
         )
@@ -664,7 +640,9 @@ class TicketModal(discord.ui.Modal):
 class TicketPanelView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(
+            timeout=None
+        )
 
     async def create_ticket(
         self,
@@ -687,6 +665,7 @@ class TicketPanelView(discord.ui.View):
         interaction,
         button
     ):
+
         await self.create_ticket(
             interaction,
             "Soporte"
@@ -703,6 +682,7 @@ class TicketPanelView(discord.ui.View):
         interaction,
         button
     ):
+
         await self.create_ticket(
             interaction,
             "Bug"
@@ -719,6 +699,7 @@ class TicketPanelView(discord.ui.View):
         interaction,
         button
     ):
+
         await self.create_ticket(
             interaction,
             "Reportar usuario"
@@ -735,6 +716,7 @@ class TicketPanelView(discord.ui.View):
         interaction,
         button
     ):
+
         await self.create_ticket(
             interaction,
             "Estafa"
@@ -751,6 +733,7 @@ class TicketPanelView(discord.ui.View):
         interaction,
         button
     ):
+
         await self.create_ticket(
             interaction,
             "Postulación"
@@ -777,7 +760,7 @@ class AddUserModal(discord.ui.Modal):
 
     async def on_submit(
         self,
-        interaction: discord.Interaction
+        interaction
     ):
 
         if not is_staff(interaction.user):
@@ -798,7 +781,7 @@ class AddUserModal(discord.ui.Modal):
         except ValueError:
 
             await interaction.response.send_message(
-                "❌ ID de usuario inválida.",
+                "❌ ID inválida.",
                 ephemeral=True
             )
 
@@ -834,7 +817,9 @@ class AddUserModal(discord.ui.Modal):
 class CloseConfirmView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=60)
+        super().__init__(
+            timeout=60
+        )
 
     @discord.ui.button(
         label="Confirmar cierre",
@@ -856,7 +841,9 @@ class CloseConfirmView(discord.ui.View):
 
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(
+            ephemeral=True
+        )
 
         await close_ticket(
             interaction.channel,
@@ -888,7 +875,9 @@ class CloseConfirmView(discord.ui.View):
 class TicketControlView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(
+            timeout=None
+        )
 
     @discord.ui.button(
         label="Reclamar",
@@ -905,7 +894,7 @@ class TicketControlView(discord.ui.View):
         if not is_staff(interaction.user):
 
             await interaction.response.send_message(
-                "❌ No tienes permiso para reclamar tickets.",
+                "❌ No tienes permiso.",
                 ephemeral=True
             )
 
@@ -1050,7 +1039,10 @@ async def generate_transcript(channel):
     return "\n".join(messages)
 
 
-async def close_ticket(channel, closed_by):
+async def close_ticket(
+    channel,
+    closed_by
+):
 
     cursor.execute(
         """
@@ -1076,18 +1068,12 @@ async def close_ticket(channel, closed_by):
         channel
     )
 
-    transcript_file = None
-
-    if transcript:
-
-        transcript_file = discord.File(
-            io.BytesIO(
-                transcript.encode(
-                    "utf-8"
-                )
-            ),
-            filename=f"ticket-{ticket_id}.txt"
-        )
+    transcript_file = discord.File(
+        io.BytesIO(
+            transcript.encode("utf-8")
+        ),
+        filename=f"ticket-{ticket_id}.txt"
+    )
 
     cursor.execute(
         """
@@ -1160,9 +1146,11 @@ async def close_ticket(channel, closed_by):
     await asyncio.sleep(3)
 
     try:
+
         await channel.delete(
             reason="Ticket cerrado"
         )
+
     except Exception:
         pass
 
@@ -1208,7 +1196,8 @@ class RatingView(discord.ui.View):
                 cursor.execute(
                     """
                     INSERT INTO ratings
-                    (ticket_id, staff_id, user_id, rating, created_at)
+                    (ticket_id, staff_id, user_id,
+                     rating, created_at)
                     VALUES (?, ?, ?, ?, ?)
                     """,
                     (
@@ -1224,8 +1213,8 @@ class RatingView(discord.ui.View):
 
                 await interaction.response.edit_message(
                     content=(
-                        f"⭐ Gracias por valorar la atención con "
-                        f"**{value}/5**."
+                        f"⭐ Gracias por valorar la atención "
+                        f"con **{value}/5**."
                     ),
                     view=None
                 )
@@ -1238,7 +1227,7 @@ class RatingView(discord.ui.View):
 
 
 # ============================================================
-# COMANDOS DE ADMINISTRACIÓN
+# ADMINISTRACIÓN
 # ============================================================
 
 @bot.tree.command(
@@ -1327,10 +1316,7 @@ async def ban(
 
 @bot.tree.command(
     name="unban",
-    description="Desbanea un usuario mediante ID."
-)
-@app_commands.describe(
-    user_id="ID del usuario"
+    description="Desbanea a un usuario mediante ID."
 )
 async def unban(
     interaction,
@@ -1401,18 +1387,16 @@ async def timeout(
 
     try:
 
-        until = now() + timedelta(
-            minutes=minutes
-        )
-
         await member.timeout(
-            until,
+            now() + discord.utils.timedelta(
+                minutes=minutes
+            ),
             reason=reason
         )
 
         await interaction.response.send_message(
-            f"🔇 {member.mention} ha recibido un timeout "
-            f"de **{minutes} minutos**.\n"
+            f"🔇 {member.mention} ha recibido "
+            f"un timeout de **{minutes} minutos**.\n"
             f"**Motivo:** {reason}"
         )
 
@@ -1464,10 +1448,6 @@ async def untimeout(
     name="warn",
     description="Advierte a un usuario."
 )
-@app_commands.describe(
-    member="Usuario",
-    reason="Motivo"
-)
 async def warn(
     interaction,
     member: discord.Member,
@@ -1507,7 +1487,7 @@ async def warn(
 
 @bot.tree.command(
     name="warnings",
-    description="Consulta las advertencias de un usuario."
+    description="Consulta las advertencias."
 )
 async def warnings(
     interaction,
@@ -1577,9 +1557,6 @@ async def warnings(
     name="clear",
     description="Borra mensajes."
 )
-@app_commands.describe(
-    amount="Cantidad"
-)
 async def clear(
     interaction,
     amount: int
@@ -1594,11 +1571,10 @@ async def clear(
 
         return
 
-    if amount < 1:
-        amount = 1
-
-    if amount > 100:
-        amount = 100
+    amount = max(
+        1,
+        min(amount, 100)
+    )
 
     await interaction.response.defer(
         ephemeral=True
@@ -1672,9 +1648,6 @@ async def unlock(
     name="slowmode",
     description="Configura el modo lento."
 )
-@app_commands.describe(
-    seconds="Segundos"
-)
 async def slowmode(
     interaction,
     seconds: int
@@ -1689,11 +1662,10 @@ async def slowmode(
 
         return
 
-    if seconds < 0:
-        seconds = 0
-
-    if seconds > 21600:
-        seconds = 21600
+    seconds = max(
+        0,
+        min(seconds, 21600)
+    )
 
     await interaction.channel.edit(
         slowmode_delay=seconds
@@ -1729,19 +1701,6 @@ async def userinfo(
         value=discord.utils.format_dt(
             member.created_at,
             style="F"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="Entró al servidor",
-        value=(
-            discord.utils.format_dt(
-                member.joined_at,
-                style="F"
-            )
-            if member.joined_at
-            else "Desconocido"
         ),
         inline=False
     )
@@ -1811,7 +1770,8 @@ async def verificacion(
     if interaction.channel.id != VERIFICATION_CHANNEL_ID:
 
         await interaction.response.send_message(
-            "❌ Este comando solo puede utilizarse en el canal de verificación.",
+            "❌ Este comando solo puede utilizarse "
+            "en el canal de verificación.",
             ephemeral=True
         )
 
@@ -1820,7 +1780,7 @@ async def verificacion(
     if not is_admin(interaction.user):
 
         await interaction.response.send_message(
-            "❌ No tienes permisos para hacer esto.",
+            "❌ No tienes permisos.",
             ephemeral=True
         )
 
@@ -1837,7 +1797,7 @@ async def verificacion(
 
 
 # ============================================================
-# COMANDO TICKET PANEL
+# COMANDO TICKETS
 # ============================================================
 
 @bot.tree.command(
@@ -1863,7 +1823,8 @@ async def ticketpanel(
     ):
 
         await interaction.response.send_message(
-            "❌ Este comando solo puede utilizarse en el canal configurado.",
+            "❌ Este comando solo puede utilizarse "
+            "en el canal configurado.",
             ephemeral=True
         )
 
@@ -1873,8 +1834,7 @@ async def ticketpanel(
         title="🎫 Centro de soporte — Corruption Network",
         description=(
             "¿Necesitas ayuda?\n\n"
-            "Selecciona el tipo de ticket que necesitas "
-            "utilizando los botones de abajo.\n\n"
+            "Selecciona el tipo de ticket que necesitas:\n\n"
             "🎫 **Soporte**\n"
             "🐛 **Bug**\n"
             "🚨 **Reportar usuario**\n"
@@ -1900,12 +1860,68 @@ async def ticketpanel(
 
 
 # ============================================================
-# STAFF STATS
+# COMANDO PLATAFORMAS
+# ============================================================
+
+@bot.tree.command(
+    name="plataformas",
+    description="Crea los roles JAVA y BEDROCK y publica el panel."
+)
+async def plataformas(
+    interaction
+):
+
+    if not is_admin(interaction.user):
+
+        await interaction.response.send_message(
+            "❌ No tienes permisos.",
+            ephemeral=True
+        )
+
+        return
+
+    java_role, bedrock_role = (
+        await get_or_create_platform_roles(
+            interaction.guild
+        )
+    )
+
+    embed = discord.Embed(
+        title="🎮 Selecciona tu plataforma",
+        description=(
+            "Selecciona desde qué plataforma juegas "
+            "en **Corruption Network**.\n\n"
+            "☕ **JAVA**\n"
+            "Pulsa el botón para recibir el rol `JAVA`.\n\n"
+            "📱 **BEDROCK**\n"
+            "Pulsa el botón para recibir el rol `BEDROCK`.\n\n"
+            "⚠️ Solo puedes tener una plataforma."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text="Corruption Network • Plataformas"
+    )
+
+    await interaction.channel.send(
+        embed=embed,
+        view=PlatformView()
+    )
+
+    await interaction.response.send_message(
+        "✅ Panel de plataformas creado.",
+        ephemeral=True
+    )
+
+
+# ============================================================
+# ESTADÍSTICAS STAFF
 # ============================================================
 
 @bot.tree.command(
     name="staffstats",
-    description="Muestra las estadísticas de atención de un staff."
+    description="Muestra las estadísticas de un staff."
 )
 async def staffstats(
     interaction,
@@ -1985,9 +2001,13 @@ async def on_ready():
         f"✅ Bot conectado como {bot.user}"
     )
 
-    # Registrar botones persistentes
+    # Botones persistentes
     bot.add_view(
         VerificationView()
+    )
+
+    bot.add_view(
+        PlatformView()
     )
 
     bot.add_view(
@@ -2040,7 +2060,7 @@ async def on_ready():
 if not TOKEN:
 
     raise RuntimeError(
-        "❌ Falta la variable DISCORD_TOKEN en Railway."
+        "❌ Falta DISCORD_TOKEN en Railway."
     )
 
 bot.run(
