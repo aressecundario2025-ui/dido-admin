@@ -4,6 +4,7 @@ import re
 import sqlite3
 import asyncio
 import threading
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta, timezone
 
@@ -17,8 +18,6 @@ from discord import app_commands
 # ============================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-
-GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
 TICKET_PANEL_CHANNEL_ID = int(
     os.getenv("TICKET_PANEL_CHANNEL_ID", "0")
@@ -48,6 +47,7 @@ ADMIN_ROLE_ID = int(
     os.getenv("ADMIN_ROLE_ID", "0")
 )
 
+
 # ============================================================
 # VERIFICACIÓN
 # ============================================================
@@ -57,7 +57,7 @@ MEMBER_ROLE_ID = 1556321345145667708
 
 
 # ============================================================
-# SERVIDOR HTTP PARA RENDER
+# RENDER - SERVIDOR WEB
 # ============================================================
 
 PORT = int(os.getenv("PORT", "10000"))
@@ -67,8 +67,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header(
+            "Content-Type",
+            "text/plain"
+        )
         self.end_headers()
+
         self.wfile.write(
             b"Corruption Network Discord Bot is online."
         )
@@ -78,12 +82,15 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_web_server():
+
     server = HTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
     )
 
-    print(f"🌐 Servidor HTTP iniciado en el puerto {PORT}")
+    print(
+        f"🌐 Servidor HTTP iniciado en el puerto {PORT}"
+    )
 
     server.serve_forever()
 
@@ -150,7 +157,10 @@ db.commit()
 # ============================================================
 
 intents = discord.Intents.default()
+
 intents.guilds = True
+intents.members = True
+
 
 bot = commands.Bot(
     command_prefix="!",
@@ -173,6 +183,7 @@ def is_staff(member: discord.Member):
         return True
 
     if STAFF_ROLE_ID:
+
         if any(
             role.id == STAFF_ROLE_ID
             for role in member.roles
@@ -180,6 +191,7 @@ def is_staff(member: discord.Member):
             return True
 
     if ADMIN_ROLE_ID:
+
         if any(
             role.id == ADMIN_ROLE_ID
             for role in member.roles
@@ -195,6 +207,7 @@ def is_admin(member: discord.Member):
         return True
 
     if ADMIN_ROLE_ID:
+
         if any(
             role.id == ADMIN_ROLE_ID
             for role in member.roles
@@ -214,8 +227,10 @@ async def send_log(guild, message):
     )
 
     if channel:
+
         try:
             await channel.send(message)
+
         except Exception:
             pass
 
@@ -223,7 +238,11 @@ async def send_log(guild, message):
 def get_ticket(channel_id):
 
     cursor.execute(
-        "SELECT * FROM tickets WHERE channel_id = ?",
+        """
+        SELECT *
+        FROM tickets
+        WHERE channel_id = ?
+        """,
         (channel_id,)
     )
 
@@ -237,7 +256,11 @@ def get_ticket(channel_id):
 class VerificationView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
+
 
     @discord.ui.button(
         label="Verificarme",
@@ -259,10 +282,12 @@ class VerificationView(discord.ui.View):
         )
 
         if role is None:
+
             await interaction.response.send_message(
                 "❌ No encuentro el rol `Miembro`.",
                 ephemeral=True
             )
+
             return
 
         member = interaction.user
@@ -407,7 +432,9 @@ class PlatformView(discord.ui.View):
         bedrock_role_id
     ):
 
-        super().__init__(timeout=None)
+        super().__init__(
+            timeout=None
+        )
 
         self.java_role_id = java_role_id
         self.bedrock_role_id = bedrock_role_id
@@ -435,7 +462,9 @@ class PlatformView(discord.ui.View):
         if java_role is None or bedrock_role is None:
 
             java_role, bedrock_role = (
-                await get_or_create_platform_roles(guild)
+                await get_or_create_platform_roles(
+                    guild
+                )
             )
 
         if java_role is None or bedrock_role is None:
@@ -577,7 +606,9 @@ async def plataformas(
     )
 
     java_role, bedrock_role = (
-        await get_or_create_platform_roles(guild)
+        await get_or_create_platform_roles(
+            guild
+        )
     )
 
     if java_role is None or bedrock_role is None:
@@ -821,7 +852,10 @@ class TicketReasonModal(discord.ui.Modal):
 class TicketPanelView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
 
     async def open_ticket(
@@ -1112,7 +1146,10 @@ class RatingView(discord.ui.View):
 class TicketControlView(discord.ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
 
     @discord.ui.button(
@@ -1375,7 +1412,6 @@ class TicketControlView(discord.ui.View):
                     )
 
                 except discord.Forbidden:
-
                     pass
 
         await send_log(
@@ -1490,7 +1526,7 @@ async def staffstats(
             AVG(rating)
         FROM ratings
         GROUP BY staff_id
-        ORDER BY average DESC
+        ORDER BY AVG(rating) DESC
         """
     )
 
@@ -1872,7 +1908,9 @@ async def clear(
 @app_commands.checks.has_permissions(
     manage_channels=True
 )
-async def lock(interaction):
+async def lock(
+    interaction
+):
 
     overwrite = (
         interaction.channel.overwrites_for(
@@ -1899,7 +1937,9 @@ async def lock(interaction):
 @app_commands.checks.has_permissions(
     manage_channels=True
 )
-async def unlock(interaction):
+async def unlock(
+    interaction
+):
 
     overwrite = (
         interaction.channel.overwrites_for(
@@ -1948,7 +1988,8 @@ async def slowmode(
     )
 
     await interaction.response.send_message(
-        f"🐢 Slowmode establecido en **{seconds} segundos**."
+        f"🐢 Slowmode establecido en "
+        f"**{seconds} segundos**."
     )
 
 
@@ -2093,10 +2134,20 @@ async def on_app_command_error(
             "este comando."
         )
 
+    elif isinstance(
+        error,
+        app_commands.errors.CommandOnCooldown
+    ):
+
+        message = (
+            "⏳ Este comando está temporalmente "
+            "en cooldown."
+        )
+
     else:
 
         print(
-            "ERROR SLASH COMMAND:",
+            "❌ ERROR SLASH COMMAND:",
             repr(error)
         )
 
@@ -2133,41 +2184,71 @@ async def on_app_command_error(
 async def on_ready():
 
     print("=" * 60)
-    print(f"🤖 BOT: {bot.user}")
+    print("🤖 CORRUPTION NETWORK")
+    print(f"🤖 Bot: {bot.user}")
     print(f"🆔 ID: {bot.user.id}")
     print("=" * 60)
 
-    # Views persistentes
+    # ========================================================
+    # VIEWS PERSISTENTES
+    # ========================================================
+
     try:
+
         bot.add_view(
             VerificationView()
         )
-    except Exception:
-        pass
+
+        print(
+            "✅ VerificationView cargada."
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ VerificationView: {e}"
+        )
+
 
     try:
+
         bot.add_view(
             TicketPanelView()
         )
-    except Exception:
-        pass
+
+        print(
+            "✅ TicketPanelView cargada."
+        )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ TicketPanelView: {e}"
+        )
+
 
     try:
+
         bot.add_view(
             TicketControlView()
         )
-    except Exception:
-        pass
-
-    guild = bot.get_guild(
-        GUILD_ID
-    )
-
-    if guild:
 
         print(
-            f"🏠 Servidor encontrado: {guild.name}"
+            "✅ TicketControlView cargada."
         )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ TicketControlView: {e}"
+        )
+
+
+    # ========================================================
+    # CARGAR PLATFORM VIEW EN TODOS LOS SERVIDORES
+    # ========================================================
+
+    for guild in bot.guilds:
 
         java_role = discord.utils.get(
             guild.roles,
@@ -2190,55 +2271,63 @@ async def on_ready():
                     )
                 )
 
-            except Exception:
-                pass
-
-        # ====================================================
-        # SINCRONIZAR COMANDOS EN EL SERVIDOR
-        # ====================================================
-
-        try:
-
-            bot.tree.copy_global_to(
-                guild=guild
-            )
-
-            synced = await bot.tree.sync(
-                guild=guild
-            )
-
-            print(
-                f"✅ {len(synced)} comandos sincronizados."
-            )
-
-            print("📋 COMANDOS:")
-
-            for command in synced:
-
                 print(
-                    f"   /{command.name}"
+                    f"✅ PlatformView cargada en {guild.name}"
                 )
 
-        except Exception as e:
+            except Exception as e:
+
+                print(
+                    f"⚠️ PlatformView en {guild.name}: {e}"
+                )
+
+
+    # ========================================================
+    # SINCRONIZACIÓN GLOBAL
+    # ========================================================
+
+    try:
+
+        print("")
+        print("🔄 Sincronizando comandos globalmente...")
+
+        synced = await bot.tree.sync()
+
+        print("")
+        print("╔══════════════════════════════════════╗")
+        print("║      ✅ COMANDOS REGISTRADOS         ║")
+        print("╚══════════════════════════════════════╝")
+
+        for command in synced:
 
             print(
-                "❌ ERROR SINCRONIZANDO:",
-                repr(e)
+                f"✅ /{command.name}"
             )
 
-    else:
-
+        print("")
         print(
-            "❌ No encuentro el GUILD_ID."
+            f"🎉 TOTAL: {len(synced)} comandos"
         )
 
-    print(
-        "🚀 CORRUPTION NETWORK BOT ONLINE"
-    )
+    except Exception as e:
+
+        print("")
+        print("╔══════════════════════════════════════╗")
+        print("║      ❌ ERROR DE SINCRONIZACIÓN      ║")
+        print("╚══════════════════════════════════════╝")
+
+        print(
+            repr(e)
+        )
+
+
+    print("")
+    print("🚀 CORRUPTION NETWORK BOT ONLINE")
+    print("=" * 60)
 
 
 # ============================================================
-# INICIAR
+# INICIAR BOT
 # ============================================================
 
 if not TOKEN:
