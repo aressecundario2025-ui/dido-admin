@@ -3,6 +3,8 @@ import io
 import re
 import sqlite3
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta, timezone
 
 import discord
@@ -46,17 +48,65 @@ ADMIN_ROLE_ID = int(
     os.getenv("ADMIN_ROLE_ID", "0")
 )
 
+# ============================================================
 # VERIFICACIÓN
+# ============================================================
+
 VERIFICATION_CHANNEL_ID = 1555632348907708508
 MEMBER_ROLE_ID = 1556321345145667708
+
+
+# ============================================================
+# SERVIDOR HTTP PARA RENDER
+# ============================================================
+
+PORT = int(os.getenv("PORT", "10000"))
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(
+            b"Corruption Network Discord Bot is online."
+        )
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_web_server():
+    server = HTTPServer(
+        ("0.0.0.0", PORT),
+        HealthHandler
+    )
+
+    print(f"🌐 Servidor HTTP iniciado en el puerto {PORT}")
+
+    server.serve_forever()
+
+
+web_thread = threading.Thread(
+    target=start_web_server,
+    daemon=True
+)
+
+web_thread.start()
 
 
 # ============================================================
 # BASE DE DATOS
 # ============================================================
 
-db = sqlite3.connect("corruption_network.db")
+db = sqlite3.connect(
+    "corruption_network.db",
+    check_same_thread=False
+)
+
 cursor = db.cursor()
+
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS tickets (
@@ -68,6 +118,7 @@ CREATE TABLE IF NOT EXISTS tickets (
 )
 """)
 
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS ratings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +128,7 @@ CREATE TABLE IF NOT EXISTS ratings (
     created_at TEXT NOT NULL
 )
 """)
+
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS warnings (
@@ -88,6 +140,7 @@ CREATE TABLE IF NOT EXISTS warnings (
     created_at TEXT NOT NULL
 )
 """)
+
 
 db.commit()
 
@@ -115,42 +168,50 @@ def now():
 
 
 def is_staff(member: discord.Member):
+
     if member.guild_permissions.administrator:
         return True
 
-    if STAFF_ROLE_ID and any(
-        role.id == STAFF_ROLE_ID
-        for role in member.roles
-    ):
-        return True
+    if STAFF_ROLE_ID:
+        if any(
+            role.id == STAFF_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
-    if ADMIN_ROLE_ID and any(
-        role.id == ADMIN_ROLE_ID
-        for role in member.roles
-    ):
-        return True
+    if ADMIN_ROLE_ID:
+        if any(
+            role.id == ADMIN_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
     return False
 
 
 def is_admin(member: discord.Member):
+
     if member.guild_permissions.administrator:
         return True
 
-    if ADMIN_ROLE_ID and any(
-        role.id == ADMIN_ROLE_ID
-        for role in member.roles
-    ):
-        return True
+    if ADMIN_ROLE_ID:
+        if any(
+            role.id == ADMIN_ROLE_ID
+            for role in member.roles
+        ):
+            return True
 
     return False
 
 
 async def send_log(guild, message):
+
     if not LOG_CHANNEL_ID:
         return
 
-    channel = guild.get_channel(LOG_CHANNEL_ID)
+    channel = guild.get_channel(
+        LOG_CHANNEL_ID
+    )
 
     if channel:
         try:
@@ -160,20 +221,13 @@ async def send_log(guild, message):
 
 
 def get_ticket(channel_id):
+
     cursor.execute(
         "SELECT * FROM tickets WHERE channel_id = ?",
         (channel_id,)
     )
+
     return cursor.fetchone()
-
-
-def get_claimed_staff(channel_id):
-    data = get_ticket(channel_id)
-
-    if not data:
-        return None
-
-    return data[3]
 
 
 # ============================================================
@@ -200,11 +254,13 @@ class VerificationView(discord.ui.View):
         if not interaction.guild:
             return
 
-        role = interaction.guild.get_role(MEMBER_ROLE_ID)
+        role = interaction.guild.get_role(
+            MEMBER_ROLE_ID
+        )
 
         if role is None:
             await interaction.response.send_message(
-                "❌ No se encuentra el rol de Miembro.",
+                "❌ No encuentro el rol `Miembro`.",
                 ephemeral=True
             )
             return
@@ -212,33 +268,42 @@ class VerificationView(discord.ui.View):
         member = interaction.user
 
         if role in member.roles:
+
             await interaction.response.send_message(
                 "✅ Ya estás verificado.",
                 ephemeral=True
             )
+
             return
 
         try:
+
             await member.add_roles(
                 role,
-                reason="Verificación de Corruption Network"
+                reason="Verificación Corruption Network"
             )
 
             await interaction.response.send_message(
                 "✅ **Verificación completada.**\n"
-                "Ya tienes acceso al servidor.",
+                "Ya tienes acceso a los canales.",
                 ephemeral=True
             )
 
         except discord.Forbidden:
+
             await interaction.response.send_message(
-                "❌ No puedo darte el rol. "
-                "Comprueba que mi rol esté por encima de `Miembro`.",
+                "❌ No puedo darte el rol `Miembro`.\n\n"
+                "Comprueba que el rol del bot esté por encima "
+                "de `Miembro`.",
                 ephemeral=True
             )
 
         except Exception as e:
-            print("Error de verificación:", e)
+
+            print(
+                "ERROR VERIFICACIÓN:",
+                repr(e)
+            )
 
             await interaction.response.send_message(
                 "❌ Ha ocurrido un error al verificarte.",
@@ -250,14 +315,21 @@ class VerificationView(discord.ui.View):
     name="verificacion",
     description="Crear el panel de verificación"
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def verificacion(interaction: discord.Interaction):
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def verificacion(
+    interaction: discord.Interaction
+):
 
     if interaction.channel_id != VERIFICATION_CHANNEL_ID:
+
         await interaction.response.send_message(
-            f"❌ Este comando solo puede utilizarse en <#{VERIFICATION_CHANNEL_ID}>.",
+            f"❌ Este comando solo puede utilizarse en "
+            f"<#{VERIFICATION_CHANNEL_ID}>.",
             ephemeral=True
         )
+
         return
 
     embed = discord.Embed(
@@ -265,16 +337,16 @@ async def verificacion(interaction: discord.Interaction):
         description=(
             "**Bienvenido a Corruption Network.**\n\n"
             "Para acceder al servidor debes verificarte.\n\n"
-            "Pulsa el botón de abajo para recibir automáticamente "
-            "el rol **Miembro** y desbloquear los canales.\n\n"
-            "✅ **Sin CAPTCHA**\n"
-            "⚡ Verificación instantánea"
+            "Pulsa **✅ Verificarme** y recibirás "
+            "automáticamente el rol **Miembro**.\n\n"
+            "⚡ Verificación instantánea\n"
+            "🔓 Acceso automático a los canales"
         ),
         color=discord.Color.red()
     )
 
     embed.set_footer(
-        text="Corruption Network • Sistema de verificación"
+        text="Corruption Network • Verificación"
     )
 
     await interaction.channel.send(
@@ -307,18 +379,21 @@ async def get_or_create_platform_roles(guild):
     try:
 
         if java_role is None:
+
             java_role = await guild.create_role(
                 name="JAVA",
                 reason="Rol de plataforma Corruption Network"
             )
 
         if bedrock_role is None:
+
             bedrock_role = await guild.create_role(
                 name="BEDROCK",
                 reason="Rol de plataforma Corruption Network"
             )
 
     except discord.Forbidden:
+
         return None, None
 
     return java_role, bedrock_role
@@ -328,18 +403,20 @@ class PlatformView(discord.ui.View):
 
     def __init__(
         self,
-        java_role_id=None,
-        bedrock_role_id=None
+        java_role_id,
+        bedrock_role_id
     ):
+
         super().__init__(timeout=None)
 
         self.java_role_id = java_role_id
         self.bedrock_role_id = bedrock_role_id
 
+
     async def assign_platform(
         self,
-        interaction: discord.Interaction,
-        platform: str
+        interaction,
+        platform
     ):
 
         guild = interaction.guild
@@ -347,21 +424,28 @@ class PlatformView(discord.ui.View):
         if guild is None:
             return
 
-        java_role = guild.get_role(self.java_role_id)
-        bedrock_role = guild.get_role(self.bedrock_role_id)
+        java_role = guild.get_role(
+            self.java_role_id
+        )
+
+        bedrock_role = guild.get_role(
+            self.bedrock_role_id
+        )
 
         if java_role is None or bedrock_role is None:
 
-            java_role, bedrock_role = await get_or_create_platform_roles(
-                guild
+            java_role, bedrock_role = (
+                await get_or_create_platform_roles(guild)
             )
 
-            if java_role is None or bedrock_role is None:
-                await interaction.response.send_message(
-                    "❌ No puedo crear/encontrar los roles.",
-                    ephemeral=True
-                )
-                return
+        if java_role is None or bedrock_role is None:
+
+            await interaction.response.send_message(
+                "❌ No puedo encontrar los roles.",
+                ephemeral=True
+            )
+
+            return
 
         member = interaction.user
 
@@ -370,58 +454,65 @@ class PlatformView(discord.ui.View):
             if platform == "JAVA":
 
                 if bedrock_role in member.roles:
+
                     await member.remove_roles(
                         bedrock_role,
                         reason="Cambio de plataforma"
                     )
 
                 if java_role not in member.roles:
+
                     await member.add_roles(
                         java_role,
                         reason="Selección de plataforma JAVA"
                     )
 
                 await interaction.response.send_message(
-                    "☕ **Plataforma seleccionada: JAVA**",
+                    "☕ **Has seleccionado JAVA.**",
                     ephemeral=True
                 )
 
             else:
 
                 if java_role in member.roles:
+
                     await member.remove_roles(
                         java_role,
                         reason="Cambio de plataforma"
                     )
 
                 if bedrock_role not in member.roles:
+
                     await member.add_roles(
                         bedrock_role,
                         reason="Selección de plataforma BEDROCK"
                     )
 
                 await interaction.response.send_message(
-                    "📱 **Plataforma seleccionada: BEDROCK**",
+                    "📱 **Has seleccionado BEDROCK.**",
                     ephemeral=True
                 )
 
         except discord.Forbidden:
 
             await interaction.response.send_message(
-                "❌ No puedo modificar esos roles.\n\n"
-                "Asegúrate de que mi rol esté **por encima de "
-                "`JAVA` y `BEDROCK`**.",
+                "❌ No puedo modificar los roles.\n\n"
+                "Pon el rol del bot **por encima de JAVA y BEDROCK**.",
                 ephemeral=True
             )
 
         except Exception as e:
 
-            print("Error plataforma:", e)
+            print(
+                "ERROR PLATAFORMA:",
+                repr(e)
+            )
 
             await interaction.response.send_message(
                 "❌ Ha ocurrido un error.",
                 ephemeral=True
             )
+
 
     @discord.ui.button(
         label="JAVA",
@@ -431,13 +522,15 @@ class PlatformView(discord.ui.View):
     )
     async def java(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+        interaction,
+        button
     ):
+
         await self.assign_platform(
             interaction,
             "JAVA"
         )
+
 
     @discord.ui.button(
         label="BEDROCK",
@@ -447,9 +540,10 @@ class PlatformView(discord.ui.View):
     )
     async def bedrock(
         self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
+        interaction,
+        button
     ):
+
         await self.assign_platform(
             interaction,
             "BEDROCK"
@@ -458,56 +552,59 @@ class PlatformView(discord.ui.View):
 
 @bot.tree.command(
     name="plataformas",
-    description="Crear el panel para seleccionar JAVA o BEDROCK"
+    description="Crear el panel JAVA / BEDROCK"
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def plataformas(interaction: discord.Interaction):
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def plataformas(
+    interaction: discord.Interaction
+):
 
     guild = interaction.guild
 
     if guild is None:
+
         await interaction.response.send_message(
-            "❌ Este comando solo funciona dentro de un servidor.",
+            "❌ Este comando solo funciona en un servidor.",
             ephemeral=True
         )
+
         return
 
     await interaction.response.defer(
         ephemeral=True
     )
 
-    java_role, bedrock_role = await get_or_create_platform_roles(
-        guild
+    java_role, bedrock_role = (
+        await get_or_create_platform_roles(guild)
     )
 
     if java_role is None or bedrock_role is None:
 
         await interaction.followup.send(
-            "❌ No pude crear los roles `JAVA` y `BEDROCK`.\n"
-            "Comprueba que el bot tenga **Gestionar roles**.",
+            "❌ No puedo crear los roles.\n"
+            "Dale al bot el permiso **Gestionar roles**.",
             ephemeral=True
         )
+
         return
 
     embed = discord.Embed(
         title="🌐 Selecciona tu plataforma",
         description=(
-            "Selecciona la plataforma desde la que juegas.\n\n"
-
+            "Selecciona la edición de Minecraft que utilizas.\n\n"
             "☕ **JAVA**\n"
             "Minecraft Java Edition.\n\n"
-
             "📱 **BEDROCK**\n"
             "Minecraft Bedrock Edition.\n\n"
-
-            "⚠️ Solo puedes tener una plataforma.\n"
-            "Si cambias de plataforma, se eliminará la anterior."
+            "⚠️ Solo puedes tener una plataforma."
         ),
         color=discord.Color.red()
     )
 
     embed.set_footer(
-        text="Corruption Network • Plataforma"
+        text="Corruption Network • Plataformas"
     )
 
     await interaction.channel.send(
@@ -519,7 +616,7 @@ async def plataformas(interaction: discord.Interaction):
     )
 
     await interaction.followup.send(
-        "✅ Panel de plataformas creado correctamente.",
+        "✅ Panel de plataformas creado.",
         ephemeral=True
     )
 
@@ -529,22 +626,27 @@ async def plataformas(interaction: discord.Interaction):
 # ============================================================
 
 TICKET_TYPES = {
+
     "soporte": {
         "name": "Soporte",
         "emoji": "🎫"
     },
+
     "bug": {
         "name": "Bug",
         "emoji": "🐛"
     },
+
     "reporte": {
         "name": "Reportar usuario",
         "emoji": "🚨"
     },
+
     "estafa": {
         "name": "Estafa",
         "emoji": "💰"
     },
+
     "postulacion": {
         "name": "Postulación",
         "emoji": "📝"
@@ -559,12 +661,15 @@ class TicketReasonModal(discord.ui.Modal):
         self.ticket_type = ticket_type
 
         super().__init__(
-            title=f"Ticket • {TICKET_TYPES[ticket_type]['name']}"
+            title=(
+                f"Ticket • "
+                f"{TICKET_TYPES[ticket_type]['name']}"
+            )
         )
 
         self.reason = discord.ui.TextInput(
             label="¿En qué podemos ayudarte?",
-            placeholder="Explica brevemente el motivo del ticket...",
+            placeholder="Explica brevemente el motivo...",
             style=discord.TextStyle.paragraph,
             required=True,
             max_length=1000
@@ -572,9 +677,10 @@ class TicketReasonModal(discord.ui.Modal):
 
         self.add_item(self.reason)
 
+
     async def on_submit(
         self,
-        interaction: discord.Interaction
+        interaction
     ):
 
         guild = interaction.guild
@@ -587,10 +693,12 @@ class TicketReasonModal(discord.ui.Modal):
         )
 
         if category is None:
+
             await interaction.response.send_message(
                 "❌ La categoría de tickets no existe.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.defer(
@@ -602,24 +710,30 @@ class TicketReasonModal(discord.ui.Modal):
         )
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(
-                view_channel=False
-            ),
 
-            interaction.user: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True
-            )
+            guild.default_role:
+                discord.PermissionOverwrite(
+                    view_channel=False
+                ),
+
+            interaction.user:
+                discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True
+                )
         }
 
         if staff_role:
-            overwrites[staff_role] = discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True
+
+            overwrites[staff_role] = (
+                discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True
+                )
             )
 
         safe_name = re.sub(
@@ -645,7 +759,13 @@ class TicketReasonModal(discord.ui.Modal):
         cursor.execute(
             """
             INSERT INTO tickets
-            (channel_id, user_id, ticket_type, claimed_by, created_at)
+            (
+                channel_id,
+                user_id,
+                ticket_type,
+                claimed_by,
+                created_at
+            )
             VALUES (?, ?, ?, NULL, ?)
             """,
             (
@@ -661,7 +781,8 @@ class TicketReasonModal(discord.ui.Modal):
         embed = discord.Embed(
             title=(
                 f"{TICKET_TYPES[self.ticket_type]['emoji']} "
-                f"Ticket de {TICKET_TYPES[self.ticket_type]['name']}"
+                f"Ticket de "
+                f"{TICKET_TYPES[self.ticket_type]['name']}"
             ),
             description=(
                 f"Hola {interaction.user.mention} 👋\n\n"
@@ -677,14 +798,15 @@ class TicketReasonModal(discord.ui.Modal):
             text="Corruption Network • Soporte"
         )
 
+        staff_text = ""
+
+        if staff_role:
+            staff_text = staff_role.mention
+
         await channel.send(
             content=(
-                interaction.user.mention
-                + (
-                    f" {staff_role.mention}"
-                    if staff_role
-                    else ""
-                )
+                f"{interaction.user.mention} "
+                f"{staff_text}"
             ),
             embed=embed,
             view=TicketControlView()
@@ -701,6 +823,7 @@ class TicketPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
+
     async def open_ticket(
         self,
         interaction,
@@ -711,17 +834,24 @@ class TicketPanelView(discord.ui.View):
             TicketReasonModal(ticket_type)
         )
 
+
     @discord.ui.button(
         label="Soporte",
         emoji="🎫",
         style=discord.ButtonStyle.primary,
         custom_id="ticket_support"
     )
-    async def soporte(self, interaction, button):
+    async def soporte(
+        self,
+        interaction,
+        button
+    ):
+
         await self.open_ticket(
             interaction,
             "soporte"
         )
+
 
     @discord.ui.button(
         label="Bug",
@@ -729,11 +859,17 @@ class TicketPanelView(discord.ui.View):
         style=discord.ButtonStyle.secondary,
         custom_id="ticket_bug"
     )
-    async def bug(self, interaction, button):
+    async def bug(
+        self,
+        interaction,
+        button
+    ):
+
         await self.open_ticket(
             interaction,
             "bug"
         )
+
 
     @discord.ui.button(
         label="Reportar usuario",
@@ -741,11 +877,17 @@ class TicketPanelView(discord.ui.View):
         style=discord.ButtonStyle.danger,
         custom_id="ticket_report"
     )
-    async def reporte(self, interaction, button):
+    async def reporte(
+        self,
+        interaction,
+        button
+    ):
+
         await self.open_ticket(
             interaction,
             "reporte"
         )
+
 
     @discord.ui.button(
         label="Estafa",
@@ -753,11 +895,17 @@ class TicketPanelView(discord.ui.View):
         style=discord.ButtonStyle.danger,
         custom_id="ticket_scam"
     )
-    async def estafa(self, interaction, button):
+    async def estafa(
+        self,
+        interaction,
+        button
+    ):
+
         await self.open_ticket(
             interaction,
             "estafa"
         )
+
 
     @discord.ui.button(
         label="Postulación",
@@ -765,7 +913,12 @@ class TicketPanelView(discord.ui.View):
         style=discord.ButtonStyle.success,
         custom_id="ticket_application"
     )
-    async def postulacion(self, interaction, button):
+    async def postulacion(
+        self,
+        interaction,
+        button
+    ):
+
         await self.open_ticket(
             interaction,
             "postulacion"
@@ -775,6 +928,7 @@ class TicketPanelView(discord.ui.View):
 class AddUserModal(discord.ui.Modal):
 
     def __init__(self):
+
         super().__init__(
             title="Añadir usuario al ticket"
         )
@@ -787,22 +941,26 @@ class AddUserModal(discord.ui.Modal):
 
         self.add_item(self.user_id)
 
-    async def on_submit(self, interaction):
 
-        channel = interaction.channel
-
-        if channel is None:
-            return
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         if not is_staff(interaction.user):
+
             await interaction.response.send_message(
                 "❌ No tienes permisos.",
                 ephemeral=True
             )
+
             return
 
         try:
-            user_id = int(self.user_id.value)
+
+            user_id = int(
+                self.user_id.value
+            )
 
         except ValueError:
 
@@ -810,6 +968,7 @@ class AddUserModal(discord.ui.Modal):
                 "❌ El ID no es válido.",
                 ephemeral=True
             )
+
             return
 
         member = interaction.guild.get_member(
@@ -819,12 +978,13 @@ class AddUserModal(discord.ui.Modal):
         if member is None:
 
             await interaction.response.send_message(
-                "❌ No encuentro ese usuario en el servidor.",
+                "❌ No encuentro ese usuario.",
                 ephemeral=True
             )
+
             return
 
-        await channel.set_permissions(
+        await interaction.channel.set_permissions(
             member,
             view_channel=True,
             send_messages=True,
@@ -833,8 +993,7 @@ class AddUserModal(discord.ui.Modal):
         )
 
         await interaction.response.send_message(
-            f"✅ {member.mention} ha sido añadido al ticket.",
-            ephemeral=False
+            f"✅ {member.mention} ha sido añadido al ticket."
         )
 
 
@@ -866,16 +1025,23 @@ class RatingView(discord.ui.View):
             ):
 
                 if interaction.user.id != self.user_id:
+
                     await interaction.response.send_message(
                         "❌ Esta valoración no es para ti.",
                         ephemeral=True
                     )
+
                     return
 
                 cursor.execute(
                     """
                     INSERT INTO ratings
-                    (staff_id, user_id, rating, created_at)
+                    (
+                        staff_id,
+                        user_id,
+                        rating,
+                        created_at
+                    )
                     VALUES (?, ?, ?, ?)
                     """,
                     (
@@ -888,27 +1054,17 @@ class RatingView(discord.ui.View):
 
                 db.commit()
 
-                staff = interaction.guild.get_member(
-                    self.staff_id
-                )
-
-                staff_text = (
-                    staff.mention
-                    if staff
-                    else f"<@{self.staff_id}>"
-                )
-
-                ratings_channel = interaction.guild.get_channel(
-                    RATINGS_CHANNEL_ID
+                ratings_channel = (
+                    interaction.guild.get_channel(
+                        RATINGS_CHANNEL_ID
+                    )
                 )
 
                 if ratings_channel:
 
                     cursor.execute(
                         """
-                        SELECT
-                            COUNT(*),
-                            AVG(rating)
+                        SELECT COUNT(*), AVG(rating)
                         FROM ratings
                         WHERE staff_id = ?
                         """,
@@ -917,19 +1073,30 @@ class RatingView(discord.ui.View):
 
                     count, average = cursor.fetchone()
 
+                    staff = interaction.guild.get_member(
+                        self.staff_id
+                    )
+
+                    staff_text = (
+                        staff.mention
+                        if staff
+                        else f"<@{self.staff_id}>"
+                    )
+
                     await ratings_channel.send(
                         f"⭐ **Nueva valoración**\n\n"
-                        f"👤 Usuario: {interaction.user.mention}\n"
+                        f"👤 Usuario: "
+                        f"{interaction.user.mention}\n"
                         f"🛡️ Staff: {staff_text}\n"
                         f"⭐ Nota: **{value}/5**\n"
-                        f"📊 Media actual: **{average:.2f}/5**\n"
-                        f"📝 Valoraciones: **{count}**"
+                        f"📊 Media: **{average:.2f}/5**\n"
+                        f"📝 Total: **{count}**"
                     )
 
                 await interaction.response.edit_message(
                     content=(
-                        f"✅ Gracias por valorar la atención con "
-                        f"**{value}/5 ⭐**."
+                        f"✅ Gracias por valorar la atención "
+                        f"con **{value}/5 ⭐**."
                     ),
                     embed=None,
                     view=None
@@ -938,6 +1105,7 @@ class RatingView(discord.ui.View):
                 self.stop()
 
             button.callback = callback
+
             self.add_item(button)
 
 
@@ -945,6 +1113,7 @@ class TicketControlView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
+
 
     @discord.ui.button(
         label="Reclamar",
@@ -964,11 +1133,14 @@ class TicketControlView(discord.ui.View):
                 "❌ Solo el staff puede reclamar tickets.",
                 ephemeral=True
             )
+
             return
 
         channel = interaction.channel
 
-        data = get_ticket(channel.id)
+        data = get_ticket(
+            channel.id
+        )
 
         if not data:
 
@@ -976,12 +1148,15 @@ class TicketControlView(discord.ui.View):
                 "❌ Este canal no es un ticket.",
                 ephemeral=True
             )
+
             return
 
         if data[3]:
 
-            claimed_member = interaction.guild.get_member(
-                data[3]
+            claimed_member = (
+                interaction.guild.get_member(
+                    data[3]
+                )
             )
 
             name = (
@@ -994,6 +1169,7 @@ class TicketControlView(discord.ui.View):
                 f"❌ Este ticket ya fue reclamado por {name}.",
                 ephemeral=True
             )
+
             return
 
         cursor.execute(
@@ -1032,8 +1208,9 @@ class TicketControlView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"🙋 **Ticket reclamado por {interaction.user.mention}.**\n"
-            "Este miembro del staff se encargará del ticket.",
+            f"🙋 **Ticket reclamado por "
+            f"{interaction.user.mention}.**\n"
+            "Este miembro del staff se encargará del ticket."
         )
 
 
@@ -1055,6 +1232,7 @@ class TicketControlView(discord.ui.View):
                 "❌ Solo el staff puede añadir usuarios.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.send_modal(
@@ -1080,11 +1258,14 @@ class TicketControlView(discord.ui.View):
                 "❌ Solo el staff puede cerrar tickets.",
                 ephemeral=True
             )
+
             return
 
         channel = interaction.channel
 
-        data = get_ticket(channel.id)
+        data = get_ticket(
+            channel.id
+        )
 
         if not data:
 
@@ -1092,6 +1273,7 @@ class TicketControlView(discord.ui.View):
                 "❌ Este canal no es un ticket.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.send_message(
@@ -1107,15 +1289,21 @@ class TicketControlView(discord.ui.View):
                 oldest_first=True
             ):
 
-                timestamp = message.created_at.strftime(
-                    "%d/%m/%Y %H:%M"
+                timestamp = (
+                    message.created_at.strftime(
+                        "%d/%m/%Y %H:%M"
+                    )
                 )
 
-                content = message.content or "[Sin texto]"
+                content = (
+                    message.content
+                    or "[Sin texto]"
+                )
 
                 transcript_lines.append(
                     f"[{timestamp}] "
-                    f"{message.author} ({message.author.id}): "
+                    f"{message.author} "
+                    f"({message.author.id}): "
                     f"{content}"
                 )
 
@@ -1136,23 +1324,33 @@ class TicketControlView(discord.ui.View):
             filename=f"{channel.name}.txt"
         )
 
-        transcript_channel = interaction.guild.get_channel(
-            TRANSCRIPT_CHANNEL_ID
+        transcript_channel = (
+            interaction.guild.get_channel(
+                TRANSCRIPT_CHANNEL_ID
+            )
         )
 
         if transcript_channel:
 
             try:
+
                 await transcript_channel.send(
                     content=(
-                        f"📁 **Transcript de {channel.name}**\n"
-                        f"👤 Ticket de <@{data[1]}>\n"
-                        f"🛡️ Cerrado por {interaction.user.mention}"
+                        f"📁 **Transcript de "
+                        f"{channel.name}**\n"
+                        f"👤 Usuario: <@{data[1]}>\n"
+                        f"🛡️ Cerrado por: "
+                        f"{interaction.user.mention}"
                     ),
                     file=transcript_file
                 )
+
             except Exception as e:
-                print("Error enviando transcript:", e)
+
+                print(
+                    "ERROR TRANSCRIPT:",
+                    repr(e)
+                )
 
         claimed_by = data[3]
 
@@ -1168,7 +1366,8 @@ class TicketControlView(discord.ui.View):
 
                     await user.send(
                         "⭐ **¿Cómo fue la atención recibida?**\n"
-                        "Valora al miembro del staff que atendió tu ticket.",
+                        "Valora al miembro del staff que atendió "
+                        "tu ticket.",
                         view=RatingView(
                             claimed_by,
                             user.id
@@ -1176,13 +1375,15 @@ class TicketControlView(discord.ui.View):
                     )
 
                 except discord.Forbidden:
+
                     pass
 
         await send_log(
             interaction.guild,
             f"🔒 Ticket cerrado: **{channel.name}**\n"
             f"👤 Usuario: <@{data[1]}>\n"
-            f"🛡️ Cerrado por: {interaction.user.mention}"
+            f"🛡️ Cerrado por: "
+            f"{interaction.user.mention}"
         )
 
         cursor.execute(
@@ -1195,9 +1396,11 @@ class TicketControlView(discord.ui.View):
         await asyncio.sleep(3)
 
         try:
+
             await channel.delete(
                 reason="Ticket cerrado"
             )
+
         except Exception:
             pass
 
@@ -1206,8 +1409,12 @@ class TicketControlView(discord.ui.View):
     name="ticketpanel",
     description="Crear el panel de tickets"
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def ticketpanel(interaction):
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def ticketpanel(
+    interaction
+):
 
     if TICKET_PANEL_CHANNEL_ID:
 
@@ -1218,13 +1425,14 @@ async def ticketpanel(interaction):
                 f"<#{TICKET_PANEL_CHANNEL_ID}>.",
                 ephemeral=True
             )
+
             return
 
     embed = discord.Embed(
         title="🎫 Soporte • Corruption Network",
         description=(
             "¿Necesitas ayuda? Abre un ticket seleccionando "
-            "una de las categorías.\n\n"
+            "una categoría.\n\n"
 
             "🎫 **Soporte**\n"
             "Ayuda general.\n\n"
@@ -1233,7 +1441,7 @@ async def ticketpanel(interaction):
             "Reporta errores o problemas.\n\n"
 
             "🚨 **Reportar usuario**\n"
-            "Reporta a un usuario por incumplir las normas.\n\n"
+            "Reporta a un usuario.\n\n"
 
             "💰 **Estafa**\n"
             "Reporta posibles estafas.\n\n"
@@ -1267,18 +1475,24 @@ async def ticketpanel(interaction):
     name="staffstats",
     description="Ver estadísticas del staff"
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def staffstats(interaction):
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def staffstats(
+    interaction
+):
 
-    cursor.execute("""
+    cursor.execute(
+        """
         SELECT
             staff_id,
-            COUNT(*) AS total,
-            AVG(rating) AS average
+            COUNT(*),
+            AVG(rating)
         FROM ratings
         GROUP BY staff_id
         ORDER BY average DESC
-    """)
+        """
+    )
 
     rows = cursor.fetchall()
 
@@ -1288,6 +1502,7 @@ async def staffstats(interaction):
             "📊 Todavía no hay valoraciones.",
             ephemeral=True
         )
+
         return
 
     description = ""
@@ -1333,7 +1548,9 @@ async def staffstats(interaction):
     member="Usuario a expulsar",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(kick_members=True)
+@app_commands.checks.has_permissions(
+    kick_members=True
+)
 async def kick(
     interaction,
     member: discord.Member,
@@ -1365,7 +1582,9 @@ async def kick(
     member="Usuario a banear",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.checks.has_permissions(
+    ban_members=True
+)
 async def ban(
     interaction,
     member: discord.Member,
@@ -1391,13 +1610,15 @@ async def ban(
 
 @bot.tree.command(
     name="unban",
-    description="Desbanear a un usuario mediante ID"
+    description="Desbanear mediante ID"
 )
 @app_commands.describe(
     user_id="ID del usuario",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(ban_members=True)
+@app_commands.checks.has_permissions(
+    ban_members=True
+)
 async def unban(
     interaction,
     user_id: str,
@@ -1405,6 +1626,7 @@ async def unban(
 ):
 
     try:
+
         user = await bot.fetch_user(
             int(user_id)
         )
@@ -1429,14 +1651,16 @@ async def unban(
 
 @bot.tree.command(
     name="timeout",
-    description="Aplicar timeout a un usuario"
+    description="Aplicar timeout"
 )
 @app_commands.describe(
     member="Usuario",
     minutes="Duración en minutos",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
 async def timeout(
     interaction,
     member: discord.Member,
@@ -1450,10 +1674,13 @@ async def timeout(
             "❌ La duración debe estar entre 1 y 40320 minutos.",
             ephemeral=True
         )
+
         return
 
     await member.timeout(
-        now() + timedelta(minutes=minutes),
+        now() + timedelta(
+            minutes=minutes
+        ),
         reason=reason
     )
 
@@ -1466,13 +1693,15 @@ async def timeout(
 
 @bot.tree.command(
     name="untimeout",
-    description="Quitar timeout a un usuario"
+    description="Quitar timeout"
 )
 @app_commands.describe(
     member="Usuario",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
 async def untimeout(
     interaction,
     member: discord.Member,
@@ -1497,7 +1726,9 @@ async def untimeout(
     member="Usuario",
     reason="Motivo"
 )
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
 async def warn(
     interaction,
     member: discord.Member,
@@ -1507,7 +1738,13 @@ async def warn(
     cursor.execute(
         """
         INSERT INTO warnings
-        (guild_id, user_id, moderator_id, reason, created_at)
+        (
+            guild_id,
+            user_id,
+            moderator_id,
+            reason,
+            created_at
+        )
         VALUES (?, ?, ?, ?, ?)
         """,
         (
@@ -1526,22 +1763,17 @@ async def warn(
         f"**Motivo:** {reason}"
     )
 
-    await send_log(
-        interaction.guild,
-        f"⚠️ Warn para {member.mention}\n"
-        f"Moderador: {interaction.user.mention}\n"
-        f"Motivo: {reason}"
-    )
-
 
 @bot.tree.command(
     name="warnings",
-    description="Ver las advertencias de un usuario"
+    description="Ver advertencias"
 )
 @app_commands.describe(
     member="Usuario"
 )
-@app_commands.checks.has_permissions(moderate_members=True)
+@app_commands.checks.has_permissions(
+    moderate_members=True
+)
 async def warnings(
     interaction,
     member: discord.Member
@@ -1568,6 +1800,7 @@ async def warnings(
         await interaction.response.send_message(
             f"✅ {member.mention} no tiene advertencias."
         )
+
         return
 
     description = ""
@@ -1601,7 +1834,9 @@ async def warnings(
 @app_commands.describe(
     amount="Cantidad de mensajes"
 )
-@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.checks.has_permissions(
+    manage_messages=True
+)
 async def clear(
     interaction,
     amount: int
@@ -1613,6 +1848,7 @@ async def clear(
             "❌ La cantidad debe estar entre 1 y 100.",
             ephemeral=True
         )
+
         return
 
     await interaction.response.defer(
@@ -1631,13 +1867,17 @@ async def clear(
 
 @bot.tree.command(
     name="lock",
-    description="Bloquear un canal"
+    description="Bloquear canal"
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def lock(interaction):
 
-    overwrite = interaction.channel.overwrites_for(
-        interaction.guild.default_role
+    overwrite = (
+        interaction.channel.overwrites_for(
+            interaction.guild.default_role
+        )
     )
 
     overwrite.send_messages = False
@@ -1654,13 +1894,17 @@ async def lock(interaction):
 
 @bot.tree.command(
     name="unlock",
-    description="Desbloquear un canal"
+    description="Desbloquear canal"
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def unlock(interaction):
 
-    overwrite = interaction.channel.overwrites_for(
-        interaction.guild.default_role
+    overwrite = (
+        interaction.channel.overwrites_for(
+            interaction.guild.default_role
+        )
     )
 
     overwrite.send_messages = None
@@ -1677,12 +1921,14 @@ async def unlock(interaction):
 
 @bot.tree.command(
     name="slowmode",
-    description="Configurar el modo lento"
+    description="Configurar slowmode"
 )
 @app_commands.describe(
-    seconds="Segundos entre mensajes"
+    seconds="Segundos"
 )
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.checks.has_permissions(
+    manage_channels=True
+)
 async def slowmode(
     interaction,
     seconds: int
@@ -1694,6 +1940,7 @@ async def slowmode(
             "❌ Debe estar entre 0 y 21600 segundos.",
             ephemeral=True
         )
+
         return
 
     await interaction.channel.edit(
@@ -1731,13 +1978,13 @@ async def userinfo(
     )
 
     embed.add_field(
-        name="ID",
+        name="🆔 ID",
         value=str(member.id),
         inline=False
     )
 
     embed.add_field(
-        name="Cuenta creada",
+        name="📅 Cuenta creada",
         value=discord.utils.format_dt(
             member.created_at,
             style="F"
@@ -1748,7 +1995,7 @@ async def userinfo(
     if member.joined_at:
 
         embed.add_field(
-            name="Entró al servidor",
+            name="📥 Entrada al servidor",
             value=discord.utils.format_dt(
                 member.joined_at,
                 style="F"
@@ -1762,8 +2009,12 @@ async def userinfo(
     ]
 
     embed.add_field(
-        name="Roles",
-        value=" ".join(roles) if roles else "Sin roles",
+        name="🎭 Roles",
+        value=(
+            " ".join(roles)
+            if roles
+            else "Sin roles"
+        ),
         inline=False
     )
 
@@ -1776,7 +2027,9 @@ async def userinfo(
     name="serverinfo",
     description="Ver información del servidor"
 )
-async def serverinfo(interaction):
+async def serverinfo(
+    interaction
+):
 
     guild = interaction.guild
 
@@ -1821,7 +2074,7 @@ async def serverinfo(interaction):
 
 
 # ============================================================
-# ERRORES DE COMANDOS
+# ERRORES
 # ============================================================
 
 @bot.tree.error
@@ -1836,16 +2089,8 @@ async def on_app_command_error(
     ):
 
         message = (
-            "❌ No tienes permisos para utilizar este comando."
-        )
-
-    elif isinstance(
-        error,
-        app_commands.errors.CommandOnCooldown
-    ):
-
-        message = (
-            "⏳ Este comando está en cooldown."
+            "❌ No tienes permisos para utilizar "
+            "este comando."
         )
 
     else:
@@ -1856,7 +2101,8 @@ async def on_app_command_error(
         )
 
         message = (
-            "❌ Ha ocurrido un error ejecutando el comando."
+            "❌ Ha ocurrido un error ejecutando "
+            "el comando."
         )
 
     try:
@@ -1880,16 +2126,16 @@ async def on_app_command_error(
 
 
 # ============================================================
-# READY / SINCRONIZACIÓN
+# READY
 # ============================================================
 
 @bot.event
 async def on_ready():
 
-    print("=" * 50)
-    print(f"🤖 Bot conectado como: {bot.user}")
+    print("=" * 60)
+    print(f"🤖 BOT: {bot.user}")
     print(f"🆔 ID: {bot.user.id}")
-    print("=" * 50)
+    print("=" * 60)
 
     # Views persistentes
     try:
@@ -1913,10 +2159,15 @@ async def on_ready():
     except Exception:
         pass
 
-    # Para plataformas necesitamos los IDs.
-    guild = bot.get_guild(GUILD_ID)
+    guild = bot.get_guild(
+        GUILD_ID
+    )
 
     if guild:
+
+        print(
+            f"🏠 Servidor encontrado: {guild.name}"
+        )
 
         java_role = discord.utils.get(
             guild.roles,
@@ -1931,17 +2182,19 @@ async def on_ready():
         if java_role and bedrock_role:
 
             try:
+
                 bot.add_view(
                     PlatformView(
                         java_role.id,
                         bedrock_role.id
                     )
                 )
+
             except Exception:
                 pass
 
         # ====================================================
-        # SINCRONIZACIÓN INSTANTÁNEA EN EL SERVIDOR
+        # SINCRONIZAR COMANDOS EN EL SERVIDOR
         # ====================================================
 
         try:
@@ -1955,15 +2208,13 @@ async def on_ready():
             )
 
             print(
-                f"✅ {len(synced)} comandos sincronizados "
-                f"en {guild.name}"
+                f"✅ {len(synced)} comandos sincronizados."
             )
 
-            print(
-                "📋 Comandos disponibles:"
-            )
+            print("📋 COMANDOS:")
 
             for command in synced:
+
                 print(
                     f"   /{command.name}"
                 )
@@ -1971,27 +2222,29 @@ async def on_ready():
         except Exception as e:
 
             print(
-                "❌ Error sincronizando comandos:",
+                "❌ ERROR SINCRONIZANDO:",
                 repr(e)
             )
 
     else:
 
         print(
-            "⚠️ No encuentro el servidor GUILD_ID."
+            "❌ No encuentro el GUILD_ID."
         )
 
-    print("🚀 Corruption Network listo.")
+    print(
+        "🚀 CORRUPTION NETWORK BOT ONLINE"
+    )
 
 
 # ============================================================
-# ARRANQUE
+# INICIAR
 # ============================================================
 
 if not TOKEN:
 
     raise RuntimeError(
-        "❌ Falta la variable DISCORD_TOKEN en Railway."
+        "❌ Falta DISCORD_TOKEN en las variables de entorno."
     )
 
 
